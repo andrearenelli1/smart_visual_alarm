@@ -1,6 +1,8 @@
 """
 Live person-score plot: raw inference output vs. 3-frame moving average.
 
+Saves the final plot to test/hardware_log/ on exit (Ctrl+C or window close).
+
 Usage:
     python live_score_plot.py
     MQTT_BROKER=192.168.1.10 python live_score_plot.py
@@ -11,6 +13,7 @@ import json
 import os
 import shutil
 import threading
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -19,7 +22,10 @@ import paho.mqtt.client as mqtt
 MQTT_BROKER       = os.environ.get("MQTT_BROKER",           "localhost")
 MQTT_PORT         = int(os.environ.get("MQTT_PORT",         "1883"))
 MQTT_SCORES_TOPIC = os.environ.get("MQTT_SCORES_TOPIC",     "alarm/scores")
-ALARM_THRESHOLD   = int(os.environ.get("ALARM_THRESHOLD_PCT", "70"))
+ALARM_THRESHOLD   = int(os.environ.get("ALARM_THRESHOLD_PCT", "60"))
+
+LOG_DIR = Path(__file__).parent.parent / "test" / "hardware_log"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 WINDOW            = 120   # frames to display at once
 
 _lock     = threading.Lock()
@@ -127,10 +133,23 @@ def main():
     print(f"[MQTT] Subscribed to '{MQTT_SCORES_TOPIC}'")
     client.loop_start()
 
+    def on_close(_):
+        client.loop_stop()
+        if _frame[0] > 0:
+            ts = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S")
+            out = LOG_DIR / f"live_score_{ts}.png"
+            fig.savefig(out, dpi=150, bbox_inches="tight")
+            print(f"[plot] Saved → {out}")
+
+    fig.canvas.mpl_connect("close_event", on_close)
+
     ani = animation.FuncAnimation(   # noqa: F841
         fig, update, interval=380, blit=True, cache_frame_data=False
     )
-    plt.show()
+    try:
+        plt.show()
+    except KeyboardInterrupt:
+        on_close(None)
     client.loop_stop()
 
 

@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-CSV_PATH = Path(__file__).parent.parent / "backend" / "stats_log.csv"
+CSV_PATH = Path(__file__).parent / "hardware_log" / "stats_log.csv"
 OUT_DIR  = Path(__file__).parent / "results"
 
 LAYER_COLORS = {

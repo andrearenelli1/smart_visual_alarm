@@ -6,9 +6,12 @@ managed_components/
 sdkconfig
 sdkconfig.old
 
-# Dataset caches (~60 GB total — download with test/download_coco_vww.py)
+# Dataset caches (~60 GB total — download with model/download_coco.sh)
 test/coco_cache/
-test/vww_data/
+
+# Hardware session logs (generated at runtime by alarm_backend / live_score_plot)
+test/hardware_log/*.csv
+test/hardware_log/live_score_*.png
 
 # Model training — heavy artifacts (download with model/download_coco.sh)
 model/coco_data/

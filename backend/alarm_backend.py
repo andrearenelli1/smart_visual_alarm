@@ -1,8 +1,9 @@
 """
 Smart Visual Alarm - Python backend
 Subscribes to MQTT alarm and scores topics.
-- Alarm events  → plays sound + Telegram notification
-- Scores events → logged to console (live plot: live_score_plot.py)
+- Alarm events  → plays sound + Telegram notification + logged to hardware_log/alarms_log.csv
+- Scores events → logged to console + hardware_log/scores_log.csv
+                  (live plot: live_score_plot.py)
 
 Usage:
     export TELEGRAM_BOT_TOKEN="your_token_here"
@@ -13,6 +14,7 @@ To get your chat_id: send any message to your bot, then open:
     https://api.telegram.org/bot<TOKEN>/getUpdates
 """
 
+import csv
 import json
 import math
 import os
@@ -22,6 +24,7 @@ import tempfile
 import threading
 import wave
 import datetime
+from pathlib import Path
 
 import requests
 import paho.mqtt.client as mqtt
@@ -33,6 +36,20 @@ MQTT_BROKER         = os.environ.get("MQTT_BROKER",         "localhost")
 MQTT_PORT           = int(os.environ.get("MQTT_PORT",       "1883"))
 MQTT_TOPIC          = os.environ.get("MQTT_TOPIC",          "alarm/person")
 MQTT_SCORES_TOPIC   = os.environ.get("MQTT_SCORES_TOPIC",   "alarm/scores")
+
+LOG_DIR = Path(__file__).parent.parent / "test" / "hardware_log"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+_SCORES_CSV = LOG_DIR / "scores_log.csv"
+_ALARMS_CSV = LOG_DIR / "alarms_log.csv"
+
+def _append_csv(path: Path, row: dict):
+    write_header = not path.exists()
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=row.keys())
+        if write_header:
+            w.writeheader()
+        w.writerow(row)
 
 
 # ---------------------------------------------------------------------------
@@ -114,18 +131,22 @@ def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode())
 
+        ts_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         if msg.topic == MQTT_SCORES_TOPIC:
             raw  = data.get("raw",      0)
             filt = data.get("filtered", 0)
             print(f"[Score] raw={raw}%  filtered={filt}%")
+            _append_csv(_SCORES_CSV, {"timestamp": ts_str, "raw": raw, "filtered": filt})
             return
 
         # alarm/person
         event_id   = data.get("event_id", "?")
         confidence = data.get("confidence", 0.0)
-        ts_str     = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         print(f"[ALARM] event={event_id}  confidence={confidence*100:.0f}%  time={ts_str}")
+        _append_csv(_ALARMS_CSV, {"timestamp": ts_str, "event_id": event_id,
+                                   "confidence": f"{confidence:.4f}"})
         play_alarm_sound()
 
         text = (
