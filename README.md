@@ -105,7 +105,7 @@ Under **Application Configuration**, set:
 | MQTT Broker Port | Default: 1883 |
 | Person detection threshold (%) | Default: 70 |
 | Alarm cooldown (seconds) | Default: 10 |
-| Moving-average window (frames) | Default: 5 |
+| Moving-average window (frames) | Default: 3 |
 
 ### Build and Flash
 
