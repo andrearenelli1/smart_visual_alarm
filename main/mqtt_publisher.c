@@ -4,6 +4,9 @@
 #ifndef CONFIG_MQTT_SCORES_TOPIC
 #define CONFIG_MQTT_SCORES_TOPIC "alarm/scores"
 #endif
+#ifndef CONFIG_MQTT_STATS_TOPIC
+#define CONFIG_MQTT_STATS_TOPIC "alarm/stats"
+#endif
 #include "mqtt_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -76,4 +79,11 @@ void mqtt_publisher_publish_score(int raw_pct, int filtered_pct)
 
     esp_mqtt_client_publish(
         s_client, CONFIG_MQTT_SCORES_TOPIC, payload, 0, /*qos=*/0, /*retain=*/0);
+}
+
+void mqtt_publisher_publish_stats(const char *json)
+{
+    if (!s_client || !json) return;
+    esp_mqtt_client_publish(
+        s_client, CONFIG_MQTT_STATS_TOPIC, json, 0, /*qos=*/0, /*retain=*/0);
 }

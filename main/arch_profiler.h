@@ -5,14 +5,18 @@
 #include <cstring>
 #include "tensorflow/lite/micro/micro_profiler_interface.h"
 
-// Keep in sync with arch_stats_t in mqtt_publisher.h
 struct ArchStats {
     float total_ms;
     float conv_opening_ms;   // Event 0: Conv2D 3×3 stride-2
-    float ds_ms[13];         // Events 1-26: DS block i → ds_ms[i-1] = DW+PW sum
+    float dw_ms[13];         // DW conv time per DS block
+    float pw_ms[13];         // PW conv time per DS block
+    float ds_ms[13];         // dw_ms[i] + pw_ms[i]
     int   n_ds;              // always 13 for MobileNetV1
     float gap_ms;            // AVERAGE_POOL_2D
     float other_ms;          // RESHAPE + SOFTMAX
+    // Derived aggregates (conv_opening + all PW, and all DW)
+    float conv_total_ms;
+    float dc_total_ms;
 };
 
 // Per-op profiler that maps TFLite Micro events to the MobileNetV1 architecture
@@ -61,8 +65,16 @@ class ArchProfiler : public tflite::MicroProfilerInterface {
     s.n_ds = 0;
     int ev = 1;
     for (int blk = 0; blk < 13 && ev + 1 < num_events_; blk++, ev += 2) {
-      s.ds_ms[blk] = (dur_us_[ev] + dur_us_[ev + 1]) / 1000.0f;
+      s.dw_ms[blk] = dur_us_[ev]     / 1000.0f;
+      s.pw_ms[blk] = dur_us_[ev + 1] / 1000.0f;
+      s.ds_ms[blk] = s.dw_ms[blk] + s.pw_ms[blk];
       s.n_ds++;
+    }
+    s.conv_total_ms = s.conv_opening_ms;
+    s.dc_total_ms   = 0.0f;
+    for (int i = 0; i < s.n_ds; i++) {
+      s.conv_total_ms += s.pw_ms[i];
+      s.dc_total_ms   += s.dw_ms[i];
     }
 
     if (ev < num_events_)
