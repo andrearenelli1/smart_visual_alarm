@@ -94,7 +94,7 @@ endmenu
 menu "Alarm Configuration"
     config ALARM_THRESHOLD_PCT
         int "Person detection threshold (%)"
-        default 50
+        default 55
         range 1 99
         help
             Minimum confidence score (0-100) to trigger an alarm.
