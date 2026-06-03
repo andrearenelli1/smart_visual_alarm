@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Download COCO 2017 images + annotations into ./coco_data/
+# Download COCO 2017 images + annotations into test/coco_cache/
 # Resume-safe: wget -c continues partial downloads.
+#
+# Output layout (matches compare_models.py --coco-dir default):
+#   test/coco_cache/train2017/       ~118 k images
+#   test/coco_cache/val2017/         ~  5 k images
+#   test/coco_cache/annotations/     instances_*.json
 #
 # Sizes:
 #   train2017.zip   ~18 GB
@@ -8,15 +13,15 @@
 #   annotations     ~241 MB
 #
 # Usage:
-#   bash download_coco.sh              # full download
-#   bash download_coco.sh --val-only   # only val2017 (~1 GB, for quick test)
+#   bash model/download_coco.sh              # full download
+#   bash model/download_coco.sh --val-only   # only val2017 (~1 GB, for quick test)
 
 set -euo pipefail
 
 VAL_ONLY=false
 [[ "${1:-}" == "--val-only" ]] && VAL_ONLY=true
 
-ROOT="$(cd "$(dirname "$0")" && pwd)/coco_data"
+ROOT="$(cd "$(dirname "$0")" && pwd)/../test/coco_cache"
 mkdir -p "$ROOT"/{train2017,val2017,annotations}
 
 BASE="http://images.cocodataset.org"

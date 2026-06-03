@@ -220,15 +220,19 @@ def infer(interp, img_int8: np.ndarray) -> float:
 # ──────────────────────────────────────────────────────────────────────────────
 # Dataset loading
 # ──────────────────────────────────────────────────────────────────────────────
-def _load_coco(coco_dir: Path, split: str = "train",
-               offset: int = 0, max_samples: int | None = None):
+def _load_coco(coco_dir: Path | None, split: str = "train",
+               offset: int = 0, max_samples: int | None = None,
+               img_dir: Path | None = None, ann_file: Path | None = None):
     try:
         from pycocotools.coco import COCO
     except ImportError:
         sys.exit("[coco] pycocotools not installed: pip install pycocotools")
 
-    ann_file = coco_dir / "annotations" / f"instances_{split}2017.json"
-    img_dir  = coco_dir / f"{split}2017"
+    if img_dir is None:
+        img_dir = coco_dir / f"{split}2017"
+    if ann_file is None:
+        ann_file = coco_dir / "annotations" / f"instances_{split}2017.json"
+
     if not ann_file.exists():
         sys.exit(f"[coco] Annotation file not found: {ann_file}")
     if not img_dir.exists():
@@ -540,9 +544,15 @@ def parse_args():
                    help="Load QAT scores from .npz (skip inference)")
     p.add_argument("--save-scores", action="store_true",
                    help="Save scores to <out-dir>/ptq_scores.npz and qat_scores.npz")
-    p.add_argument("--coco-dir",    type=Path)
+    default_coco = Path(__file__).parent / "coco_cache"
+    p.add_argument("--coco-dir",    type=Path, default=default_coco,
+                   help=f"COCO root with train2017/ and annotations/ (default: {default_coco})")
     p.add_argument("--coco-split",  default="train")
     p.add_argument("--coco-offset", type=int, default=0)
+    p.add_argument("--coco-img-dir", type=Path, default=None,
+                   help="Override image directory (for non-standard layouts)")
+    p.add_argument("--coco-ann-file", type=Path, default=None,
+                   help="Override annotation JSON file (for non-standard layouts)")
     p.add_argument("--dataset-dir", type=Path,
                    help="Local VWW root (person/ non_person/ layout)")
     p.add_argument("--split",       default="test")
@@ -581,10 +591,12 @@ def main():
 
     images = labels = None
     if need_inference:
-        if args.coco_dir:
-            images, labels = _load_coco(args.coco_dir, args.coco_split,
-                                        offset=args.coco_offset,
-                                        max_samples=args.max_samples)
+        if args.coco_dir or args.coco_img_dir:
+            images, labels = _load_coco(
+                args.coco_dir, args.coco_split,
+                offset=args.coco_offset, max_samples=args.max_samples,
+                img_dir=args.coco_img_dir, ann_file=args.coco_ann_file,
+            )
         elif args.dataset_dir:
             result = _load_dir(args.dataset_dir)
             if result:
@@ -596,8 +608,10 @@ def main():
         if images is None:
             sys.exit(
                 "\n[dataset] No dataset found. Options:\n"
-                "  --coco-dir /path/to/coco   (with --coco-offset 70000 for test split)\n"
-                "  --dataset-dir ./vww_data   person/ non_person/ layout\n"
+                "  default: test/coco_cache/  (run model/download_coco.sh to populate)\n"
+                "  --coco-dir /path/to/coco   standard layout: train2017/ + annotations/\n"
+                "  --coco-img-dir <dir> --coco-ann-file <json>  non-standard layout\n"
+                "  --dataset-dir ./dir        person/ non_person/ layout\n"
                 "  TFDS visual_wake_words     needs COCO pre-downloaded"
             )
         if not args.coco_dir and args.max_samples:
