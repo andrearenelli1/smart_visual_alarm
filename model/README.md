@@ -1,137 +1,188 @@
-# MobileNetV1 α=0.25 – Person Detector (COCO 2017)
+# MobileNetV1 α=0.25 — Person Detector (COCO 2017)
 
-Binary classifier: **person** / **no-person** — trained, PTQ-quantised,
-QAT-fine-tuned and exported as a fully INT8 TFLite model with a C array.
+Binary classifier: **person** / **no-person** — trained from scratch on COCO 2017,
+PTQ-quantised, QAT-fine-tuned, and exported as a fully INT8 TFLite model ready
+for deployment on ESP32-S3 via TensorFlow Lite for Microcontrollers.
 
 ---
 
 ## Architecture
 
 ```
-Input (224×224×3, float32 / int8)
-  └─ MobileNetV1 backbone  α=0.25, pretrained ImageNet
-       └─ GlobalAveragePooling2D
-            └─ Dropout 0.3
-                 └─ Dense(1, sigmoid)   ← person probability
+Input (96×96×1, int8 — grayscale)
+  └─ gray_to_rgb  (Concatenate ×3 → 96×96×3)
+       └─ MobileNetV1 backbone  α=0.25
+            └─ GlobalAveragePooling2D
+                 └─ Dropout 0.3
+                      └─ Dense(2, softmax)
+                              │
+                    index 0 = P(no_person)
+                    index 1 = P(person)
 ```
 
-Parameters: ~470 k (α=0.25)  
-Float32 size: ~1.9 MB  
-INT8 size:    ~480 kB  
+Parameters: ~213 k (α=0.25) — INT8 size: ~311 KB
 
 ---
 
-## Pipeline
+## Pipeline Overview
 
 ```
-COCO 2017
-  ├─ train2017 (118k imgs)  →  balanced person/no-person
-  └─ val2017   (  5k imgs)  →  evaluation
+COCO 2017 train split
+  └─ first 70,000 images → balanced person / no-person batches
 
-Phase 1 – Float training (2 phases)
-  Phase 1a: frozen backbone, train head
-  Phase 1b: unfreeze all, fine-tune at low LR
-  → evaluate → stats_float
+Phase 1 — Float training  (train.py)
+  1a. Frozen backbone, train head only        (~5 epochs)
+  1b. Unfreeze all layers, fine-tune at low LR (~5 epochs)
+  → checkpoint: checkpoints/float_model.keras
 
-Phase 2 – PTQ (post-training INT8 quantisation)
-  representative dataset calibration (200 val images)
-  → evaluate TFLite → stats_ptq
+Phase 2 — PTQ  (quantize.py)
+  Representative dataset calibration (200 images)
+  → output/person_detect_ptq_int8.tflite
 
-Phase 3 – QAT (quantisation-aware training)
-  fine-tune 5 epochs with fake-Q nodes
-  → evaluate Keras QAT → stats_qat_keras
-  → export INT8 TFLite
-  → evaluate TFLite    → stats_qat_tflite
+Phase 3 — QAT  (quantize.py)
+  Fine-tune with fake-quantisation nodes       (~3 epochs, LR=1e-5)
+  → output/person_detect_qat_int8.tflite  ← deployed in firmware
 
-Export
-  → model_qat_int8.tflite
-  → model_qat_int8.cc  (C array)
-  → model_qat_int8.h   (header)
-  → stats.json         (all metrics)
+Export  (c_array.py)
+  → output/g_person_detect_model_data.cc / .h  ← copy to main/
+  → output/stats.json                          ← all evaluation metrics
 ```
 
 ---
 
-## Quick start
+## Quick Start
+
+### 1 — Install dependencies (Python 3.10+)
 
 ```bash
-# 1 – Install deps (Python 3.10+)
 pip install -r requirements.txt
+```
 
-# 2 – Smoke test (tiny subset, 2 epochs) – runs in minutes on CPU
-python pipeline.py --smoke
+### 2 — Download COCO 2017
 
-# 3 – Full training
+```bash
+bash download_coco.sh        # downloads to coco_data/ (~25 GB)
+```
+
+### 3 — Run the full pipeline
+
+```bash
+# Full training + PTQ + QAT + export
 python pipeline.py
 
-# Skip re-training if checkpoint exists
+# Smoke-test (tiny subset, 2 epochs) — runs in minutes on CPU
+python pipeline.py --smoke
+
+# Skip float training if checkpoint already exists
 python pipeline.py --skip-train
 ```
 
-COCO 2017 is downloaded automatically by `tensorflow_datasets` (~25 GB for
-train, ~1 GB for val).  
-Set `MAX_TRAIN_SAMPLES` / `MAX_VAL_SAMPLES` in `config.py` to cap the size.
+All outputs are written to `output/`.
 
 ---
 
-## Metrics collected at every stage
+## Output Files
 
-| Metric                | Description                              |
-|-----------------------|------------------------------------------|
-| accuracy              | binary (threshold 0.5)                   |
-| precision / recall    | per class (person, no-person)            |
-| F1 macro              | unweighted mean of both classes          |
-| AUC-ROC               | area under ROC curve                     |
-| confusion matrix      | TN / FP / FN / TP                        |
-| inference_ms_per_img  | wall-clock time per image                |
-| model_size_mb         | file size or param-count × 4 bytes       |
-
----
-
-## Output files
-
-| File                           | Description                      |
-|--------------------------------|----------------------------------|
-| `checkpoints/float_model.keras`| best float32 Keras checkpoint    |
-| `output/model_ptq_int8.tflite` | INT8 PTQ TFLite model            |
-| `output/model_qat_int8.tflite` | INT8 QAT TFLite model (best)     |
-| `output/model_qat_int8.cc`     | C source with model bytes        |
-| `output/model_qat_int8.h`      | C header                         |
-| `output/stats.json`            | all evaluation stats (JSON)      |
+| File | Description | Tracked in git |
+|------|-------------|---------------|
+| `output/person_detect_ptq_int8.tflite` | INT8 PTQ model | ✓ |
+| `output/person_detect_qat_int8.tflite` | INT8 QAT model (deployed) | ✓ |
+| `output/g_person_detect_model_data.cc` | C array for firmware | ✓ |
+| `output/g_person_detect_model_data.h`  | C header for firmware | ✓ |
+| `output/stats.json` | All evaluation metrics | ✓ |
+| `checkpoints/float_model.keras` | Float32 Keras checkpoint | ✗ |
+| `coco_data/` | COCO 2017 images (~25 GB) | ✗ |
+| `logs/` | TensorBoard training logs | ✗ |
 
 ---
 
-## Using the C array (TFLM / embedded)
+## Deploying to Firmware
+
+After training, copy the generated C array into the firmware source:
+
+```bash
+# From the repo root
+cp model/output/g_person_detect_model_data.cc main/person_detect_model_data.cc
+```
+
+The file may need two small adaptations to match the existing firmware header:
 
 ```c
-#include "model_qat_int8.h"
-#include "tensorflow/lite/micro/micro_interpreter.h"
+// Change the include from:
+#include "g_person_detect_model_data.h"
+// to:
+#include "person_detect_model_data.h"
 
-// The model data is in model_qat_int8.cc:
-//   const unsigned char person_detect_model_data[];
-//   const unsigned int  person_detect_model_data_len;
-
-const tflite::Model* model =
-    tflite::GetModel(person_detect_model_data);
+// Change the length declaration from:
+const unsigned int g_person_detect_model_data_len = ...;
+// to:
+const int g_person_detect_model_data_len = ...;
 ```
 
-Input tensor: `int8[1, 224, 224, 3]`  
-Output tensor: `int8[1, 1]`  — dequantise with the tensor's scale/zero-point
-to get the sigmoid probability ∈ [0, 1].
+Then rebuild and flash the firmware:
+
+```bash
+idf.py build && idf.py -p /dev/ttyUSB0 flash
+```
 
 ---
 
-## Project structure
+## Evaluation Metrics
+
+Metrics are collected at every stage (float, PTQ, QAT-Keras, QAT-TFLite) and
+written to `output/stats.json`.
+
+| Metric | Description |
+|--------|-------------|
+| accuracy | Binary, at Youden-optimal threshold |
+| precision / recall | Per-class (person, no-person) |
+| F1 macro | Unweighted mean of both classes |
+| AUC-ROC | Area under ROC curve |
+| confusion matrix | TN / FP / FN / TP |
+| threshold_optimal | Youden's J: argmax(TPR − FPR) |
+| inference_ms_per_img | Wall-clock time per image |
+| model_size_mb | File size on disk |
+
+To re-evaluate an existing model without retraining:
+
+```bash
+python evaluate.py
+```
+
+---
+
+## Performance on Held-Out Set
+
+Evaluated on COCO 2017 train[70,000:] — **48,287 images never seen during training**.
+
+| Model | θ | Precision | Recall | F1 | FAR | AUC |
+|-------|---|-----------|--------|----|-----|-----|
+| Original PTQ (reference) | 0.50 | 81.4% | 66.4% | 0.731 | 17.8% | 0.823 |
+| **QAT (deployed)** | **0.55** | **86.6%** | **62.3%** | **0.725** | **11.4%** | **0.856** |
+| QAT | 0.45 | 83.3% | 70.3% | 0.763 | 16.6% | 0.856 |
+
+At the same F1 (0.725), the QAT model produces **39% fewer false alarms** compared
+to the reference PTQ model.
+
+---
+
+## Project Structure
 
 ```
-person_detector/
-├── config.py          – all hyper-parameters & paths
-├── dataset.py         – COCO loader, balancing, calibration gen
-├── model.py           – MobileNetV1 builder + compile helpers
-├── train.py           – two-phase float training loop
-├── quantize.py        – PTQ and QAT conversion
-├── evaluate.py        – Keras + TFLite evaluation, comparison table
-├── c_array.py         – TFLite → C/H source generator
-├── pipeline.py        – end-to-end orchestration script
-└── requirements.txt
+model/
+├── config.py          — hyperparameters and all path constants
+├── dataset.py         — COCO loader, class balancing, calibration generator
+├── model.py           — MobileNetV1 builder and compile helpers
+├── train.py           — two-phase float training loop
+├── quantize.py        — PTQ and QAT conversion
+├── evaluate.py        — Keras + TFLite evaluation, stats.json writer
+├── pipeline.py        — end-to-end orchestration (entry point)
+├── run_training.py    — thin wrapper around pipeline.py
+├── c_array.py         — TFLite → C/H source generator
+├── plot_style.py      — shared Matplotlib/IEEE style helpers
+├── replot.py          — regenerate plots from existing stats.json
+├── test_external.py   — evaluation on an external test dataset
+├── download_coco.sh   — COCO 2017 downloader script
+├── requirements.txt
+└── output/            — generated artifacts (see table above)
 ```
