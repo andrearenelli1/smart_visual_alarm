@@ -61,7 +61,8 @@ constexpr int scratchBufSize = 0;
 #endif
 // An area of memory to use for input, output, and intermediate arrays.
 // Keeping allocation on bit larger size to accomodate future needs.
-constexpr int kTensorArenaSize = 100 * 1024 + scratchBufSize;
+// MobileNetV2 160x160 RGB requires ~817 KB arena (from Edge Impulse metadata)
+constexpr int kTensorArenaSize = 900 * 1024 + scratchBufSize;
 static uint8_t *tensor_arena;//[kTensorArenaSize]; // Maybe we should move this to external
 }  // namespace
 
@@ -91,14 +92,16 @@ void setup() {
   //
   // tflite::AllOpsResolver resolver;
   // NOLINTNEXTLINE(runtime-global-variables)
+  // MobileNetV2 ops: Add (residual connections), Conv2D, DepthwiseConv2D,
+  // FullyConnected, Pad, Reshape, Softmax (from Edge Impulse tflite-resolver.h)
   static tflite::MicroMutableOpResolver<7> micro_op_resolver;
+  micro_op_resolver.AddAdd();
   micro_op_resolver.AddConv2D();
   micro_op_resolver.AddDepthwiseConv2D();
   micro_op_resolver.AddFullyConnected();
-  micro_op_resolver.AddMean();
-  micro_op_resolver.AddConcatenation();
+  micro_op_resolver.AddPad();
+  micro_op_resolver.AddReshape();
   micro_op_resolver.AddSoftmax();
-  micro_op_resolver.AddQuantize();
 
   // Build an interpreter to run the model with.
   // NOLINTNEXTLINE(runtime-global-variables)
@@ -138,7 +141,6 @@ void setup() {
 
 #ifndef CLI_ONLY_INFERENCE
 void loop() {
-  if (input == nullptr) return;
   // Get image from provider.
   if (kTfLiteOk != GetImage(kNumCols, kNumRows, kNumChannels, input->data.int8)) {
     MicroPrintf("Image capture failed.");
@@ -155,9 +157,11 @@ void loop() {
 #endif
 
   // Run the model on this input and make sure it succeeds.
+  int64_t t0 = esp_timer_get_time();
   if (kTfLiteOk != interpreter->Invoke()) {
     MicroPrintf("Invoke failed.");
   }
+  int invoke_ms = (int)((esp_timer_get_time() - t0) / 1000LL);
 
 #if defined(ARCH_PROFILER)
   arch_profiler.PrintArchBreakdown();
@@ -176,7 +180,7 @@ void loop() {
       (no_person_score - output->params.zero_point) * output->params.scale;
 
   // Respond to detection
-  RespondToDetection(person_score_f, no_person_score_f);
+  RespondToDetection(person_score_f, no_person_score_f, invoke_ms);
   vTaskDelay(1); // to avoid watchdog trigger
 }
 #endif // CLI_ONLY_INFERENCE
@@ -199,36 +203,16 @@ void run_inference(void *ptr) {
     input->data.int8[i] = ((uint8_t *) ptr)[i] ^ 0x80;
   }
 
-#if defined(COLLECT_CPU_STATS)
-  long long start_time = esp_timer_get_time();
-#endif
+  int64_t cli_t0 = esp_timer_get_time();
   // Run the model on this input and make sure it succeeds.
   if (kTfLiteOk != interpreter->Invoke()) {
     MicroPrintf("Invoke failed.");
   }
+  int cli_invoke_ms = (int)((esp_timer_get_time() - cli_t0) / 1000LL);
 
 #if defined(ARCH_PROFILER)
   arch_profiler.PrintArchBreakdown();
   arch_profiler.ClearEvents();
-#endif
-
-#if defined(COLLECT_CPU_STATS)
-  long long total_time = (esp_timer_get_time() - start_time);
-  printf("Total time = %lld\n", total_time / 1000);
-  printf("FC time = %lld\n", fc_total_time / 1000);
-  printf("DC time = %lld\n", dc_total_time / 1000);
-  printf("conv time = %lld\n", conv_total_time / 1000);
-  printf("Pooling time = %lld\n", pooling_total_time / 1000);
-  printf("add time = %lld\n", add_total_time / 1000);
-  printf("mul time = %lld\n", mul_total_time / 1000);
-
-  total_time = 0;
-  dc_total_time = 0;
-  conv_total_time = 0;
-  fc_total_time = 0;
-  pooling_total_time = 0;
-  add_total_time = 0;
-  mul_total_time = 0;
 #endif
 
   TfLiteTensor* output = interpreter->output(0);
@@ -241,5 +225,5 @@ void run_inference(void *ptr) {
       (person_score - output->params.zero_point) * output->params.scale;
   float no_person_score_f =
       (no_person_score - output->params.zero_point) * output->params.scale;
-  RespondToDetection(person_score_f, no_person_score_f);
+  RespondToDetection(person_score_f, no_person_score_f, cli_invoke_ms);
 }

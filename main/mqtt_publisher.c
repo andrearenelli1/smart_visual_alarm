@@ -66,13 +66,14 @@ void mqtt_publisher_publish_alarm(int event_id, float confidence)
     }
 }
 
-void mqtt_publisher_publish_score(int raw_pct, int filtered_pct)
+void mqtt_publisher_publish_score(int raw_pct, int filtered_pct, int invoke_ms)
 {
     if (!s_client) return;
 
-    char payload[64];
+    char payload[80];
     snprintf(payload, sizeof(payload),
-             "{\"raw\":%d,\"filtered\":%d}", raw_pct, filtered_pct);
+             "{\"raw\":%d,\"filtered\":%d,\"invoke_ms\":%d}",
+             raw_pct, filtered_pct, invoke_ms);
 
     esp_mqtt_client_publish(
         s_client, CONFIG_MQTT_SCORES_TOPIC, payload, 0, /*qos=*/0, /*retain=*/0);

@@ -13,6 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+// Adapted for MobileNetV2: input 160x160x3 RGB int8.
+// Camera captures 240x240 RGB565; pixels are nearest-neighbour downscaled to
+// 160x160 and converted to signed 8-bit RGB (uint8 - 128).
+
 #include "string.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -37,36 +41,59 @@ limitations under the License.
 static const char* TAG = "app_camera";
 static uint16_t* display_buf;
 
-// Get the camera module ready
+// Decode one RGB565 pixel (little-endian as returned by ESP camera driver)
+// into separate R, G, B uint8 components.
+static inline void rgb565_to_rgb888(uint16_t px,
+                                    uint8_t* r, uint8_t* g, uint8_t* b) {
+  uint8_t hb = px & 0xFF;
+  uint8_t lb = px >> 8;
+  *r = (lb & 0x1F) << 3;
+  *g = ((hb & 0x07) << 5) | ((lb & 0xE0) >> 3);
+  *b = (hb & 0xF8);
+}
+
+// Downscale src (src_w x src_h, RGB565) to kNumRows x kNumCols and write
+// channel-last RGB int8 into image_data[row * kNumCols * 3 + col * 3 + ch].
+static void downscale_rgb565_to_int8(const uint16_t* src,
+                                     int src_w, int src_h,
+                                     int8_t* image_data) {
+  for (int mi = 0; mi < kNumRows; mi++) {
+    int si = (mi * src_h) / kNumRows;
+    for (int mj = 0; mj < kNumCols; mj++) {
+      int sj = (mj * src_w) / kNumCols;
+      uint8_t r, g, b;
+      rgb565_to_rgb888(src[si * src_w + sj], &r, &g, &b);
+      int base = (mi * kNumCols + mj) * 3;
+      image_data[base + 0] = (int8_t)(r - 128);
+      image_data[base + 1] = (int8_t)(g - 128);
+      image_data[base + 2] = (int8_t)(b - 128);
+    }
+  }
+}
+
 TfLiteStatus InitCamera() {
 #if CLI_ONLY_INFERENCE
   ESP_LOGI(TAG, "CLI_ONLY_INFERENCE enabled, skipping camera init");
   return kTfLiteOk;
 #endif
-// If any display path is active, allocate the upscaled RGB565 frame buffer.
-// Layout (uint16_t elements, total = 240×240 + 96×96 = 66816):
-//   [0    .. 57599] upscaled 240×240 output written to LCD
-//   [57600.. 66815] temporary raw 96×96 camera frame
+
 #if DISPLAY_SUPPORT || LCD_DISPLAY
   if (display_buf == NULL) {
-#if DISPLAY_SUPPORT
-    display_buf = (uint16_t *) heap_caps_malloc((240 * 240 + 96 * 96) * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-    display_buf = (uint16_t *) heap_caps_malloc(240 * 240 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
+    display_buf = (uint16_t*) heap_caps_malloc(
+        240 * 240 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }
   if (display_buf == NULL) {
     ESP_LOGE(TAG, "Couldn't allocate display buffer");
     return kTfLiteError;
   }
-#endif // DISPLAY_SUPPORT || LCD_DISPLAY
+#endif
 
 #if LCD_DISPLAY
   if (lcd_display_init() != ESP_OK) {
     ESP_LOGE(TAG, "LCD init failed");
     return kTfLiteError;
   }
-#endif // LCD_DISPLAY
+#endif
 
 #if ESP_CAMERA_SUPPORTED
   int ret = app_camera_init();
@@ -81,13 +108,12 @@ TfLiteStatus InitCamera() {
   return kTfLiteOk;
 }
 
-void *image_provider_get_display_buf()
-{
-  return (void *) display_buf;
+void* image_provider_get_display_buf() {
+  return (void*) display_buf;
 }
 
-// Get an image from the camera module
-TfLiteStatus GetImage(int image_width, int image_height, int channels, int8_t* image_data) {
+TfLiteStatus GetImage(int image_width, int image_height, int channels,
+                      int8_t* image_data) {
 #if ESP_CAMERA_SUPPORTED
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
@@ -95,66 +121,34 @@ TfLiteStatus GetImage(int image_width, int image_height, int channels, int8_t* i
     return kTfLiteError;
   }
 
-#if DISPLAY_SUPPORT
-  // Camera at 96×96: copy raw frame, extract grayscale for inference,
-  // byte-swap, then upscale 2.5× to 240×240 for display.
-  uint16_t* cam_buf = display_buf + (240 * 240);
-  memcpy((uint8_t*)cam_buf, fb->buf, fb->len);
+  const uint16_t* src = (const uint16_t*) fb->buf;
+  // Camera always captures 240x240 RGB565 (CAMERA_FRAME_SIZE FRAMESIZE_240X240)
+  const int src_w = 240;
+  const int src_h = 240;
+
+#if LCD_DISPLAY
+  // Inference: downscale 240x240 → 160x160 RGB int8
+  downscale_rgb565_to_int8(src, src_w, src_h, image_data);
+
+  // Display: copy full 240x240 frame to display_buf.
+  // Camera outputs RGB565 in the byte order the ST7789 expects — no swap needed.
+  // detection_responder.cc calls lcd_display_draw_frame on this buffer.
+  memcpy(display_buf, src, src_w * src_h * sizeof(uint16_t));
   esp_camera_fb_return(fb);
 
-  for (int i = 0; i < kNumRows; i++) {
-    for (int j = 0; j < kNumCols; j++) {
-      uint16_t inference_pixel = cam_buf[i * kNumCols + j];
-      uint8_t hb = inference_pixel & 0xFF;
-      uint8_t lb = inference_pixel >> 8;
-      uint8_t r = (lb & 0x1F) << 3;
-      uint8_t g = ((hb & 0x07) << 5) | ((lb & 0xE0) >> 3);
-      uint8_t b = (hb & 0xF8);
-      image_data[i * kNumCols + j] = (int8_t)(((305 * r + 600 * g + 119 * b) >> 10) - 128);
-    }
-  }
-
-  lv_draw_sw_rgb565_swap(cam_buf, 96 * 96);
-
-  for (int i = 0; i < 240; i++) {
-    int si = (i * 96) / 240;
-    for (int j = 0; j < 240; j++) {
-      display_buf[i * 240 + j] = cam_buf[si * kNumCols + (j * 96) / 240];
-    }
-  }
-#elif LCD_DISPLAY
-  // Camera at 240×240: downscale nearest-neighbor to 96×96 for inference,
-  // byte-swap full frame into display_buf for LCD.
-  uint16_t* src = (uint16_t*)fb->buf;
-
-  for (int mi = 0; mi < kNumRows; mi++) {
-    int si = (mi * 240) / kNumRows;
-    for (int mj = 0; mj < kNumCols; mj++) {
-      int sj = (mj * 240) / kNumCols;
-      uint16_t px = src[si * 240 + sj];
-      uint8_t hb = px & 0xFF;
-      uint8_t lb = px >> 8;
-      uint8_t r = (lb & 0x1F) << 3;
-      uint8_t g = ((hb & 0x07) << 5) | ((lb & 0xE0) >> 3);
-      uint8_t b = (hb & 0xF8);
-      image_data[mi * kNumCols + mj] = (int8_t)(((305 * r + 600 * g + 119 * b) >> 10) - 128);
-    }
-  }
-
-  memcpy(display_buf, src, 240 * 240 * sizeof(uint16_t));
-
+#elif DISPLAY_SUPPORT
+  // BSP display path: downscale for inference, hand full frame to BSP
+  downscale_rgb565_to_int8(src, src_w, src_h, image_data);
+  memcpy(display_buf, src, src_w * src_h * sizeof(uint16_t));
   esp_camera_fb_return(fb);
-#else // DISPLAY_SUPPORT || LCD_DISPLAY
+
+#else
+  // No display: just downscale and convert
   MicroPrintf("Image Captured\n");
-  // We have initialised camera to grayscale
-  // Just quantize to int8_t
-  for (int i = 0; i < image_width * image_height; i++) {
-    image_data[i] = ((uint8_t *) fb->buf)[i] ^ 0x80;
-  }
-
+  downscale_rgb565_to_int8(src, src_w, src_h, image_data);
   esp_camera_fb_return(fb);
-#endif // DISPLAY_SUPPORT || LCD_DISPLAY
-  /* here the esp camera can give you grayscale image directly */
+#endif
+
   return kTfLiteOk;
 #else
   return kTfLiteError;

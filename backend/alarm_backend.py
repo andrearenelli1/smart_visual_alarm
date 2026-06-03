@@ -13,6 +13,7 @@ To get your chat_id: send any message to your bot, then open:
     https://api.telegram.org/bot<TOKEN>/getUpdates
 """
 
+import csv
 import json
 import math
 import os
@@ -33,6 +34,18 @@ MQTT_BROKER         = os.environ.get("MQTT_BROKER",         "localhost")
 MQTT_PORT           = int(os.environ.get("MQTT_PORT",       "1883"))
 MQTT_TOPIC          = os.environ.get("MQTT_TOPIC",          "alarm/person")
 MQTT_SCORES_TOPIC   = os.environ.get("MQTT_SCORES_TOPIC",   "alarm/scores")
+LATENCY_CSV         = os.environ.get("LATENCY_CSV", "latency_log.csv")
+
+_latency_file   = None
+_latency_writer = None
+
+def _latency_csv_init():
+    global _latency_file, _latency_writer
+    write_header = not os.path.exists(LATENCY_CSV)
+    _latency_file   = open(LATENCY_CSV, "a", newline="", buffering=1)
+    _latency_writer = csv.writer(_latency_file)
+    if write_header:
+        _latency_writer.writerow(["timestamp", "invoke_ms", "raw_pct", "filtered_pct"])
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +128,16 @@ def on_message(client, userdata, msg):
         data = json.loads(msg.payload.decode())
 
         if msg.topic == MQTT_SCORES_TOPIC:
-            raw  = data.get("raw",      0)
-            filt = data.get("filtered", 0)
-            print(f"[Score] raw={raw}%  filtered={filt}%")
+            raw       = data.get("raw",       0)
+            filt      = data.get("filtered",  0)
+            invoke_ms = data.get("invoke_ms", -1)
+            ts        = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if invoke_ms >= 0:
+                print(f"[Score] raw={raw}%  filtered={filt}%  invoke={invoke_ms}ms")
+                if _latency_writer:
+                    _latency_writer.writerow([ts, invoke_ms, raw, filt])
+            else:
+                print(f"[Score] raw={raw}%  filtered={filt}%")
             return
 
         # alarm/person
@@ -148,6 +168,7 @@ def main():
     client.on_connect = on_connect
     client.on_message = on_message
 
+    _latency_csv_init()
     print(f"[MQTT] Connecting to {MQTT_BROKER}:{MQTT_PORT} ...")
     client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
     client.loop_forever()

@@ -54,8 +54,8 @@ extern "C" {
 #include "image_provider.h"
 #include "bsp/esp-bsp.h"
 
-#define IMG_WD (96 * 2)
-#define IMG_HT (96 * 2)
+#define IMG_WD 240
+#define IMG_HT 240
 
 static lv_obj_t *camera_canvas = NULL;
 static lv_obj_t *person_indicator = NULL;
@@ -120,14 +120,14 @@ static int moving_average(int new_score)
     return sum / SCORE_WINDOW;
 }
 
-void RespondToDetection(float person_score, float no_person_score)
+void RespondToDetection(float person_score, float no_person_score, int invoke_ms)
 {
     if (!s_led_initialized) led_init();
 
     int raw_pct          = (int)(person_score * 100 + 0.5f);
     int person_score_int = moving_average(raw_pct);
     (void)no_person_score;
-    mqtt_publisher_publish_score(raw_pct, person_score_int);
+    mqtt_publisher_publish_score(raw_pct, person_score_int, invoke_ms);
 
 #if DISPLAY_SUPPORT
     if (!camera_canvas) {
