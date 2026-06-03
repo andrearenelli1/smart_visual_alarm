@@ -1,0 +1,27 @@
+# ESP-IDF build artifacts
+build/
+managed_components/
+
+# sdkconfig contains WiFi credentials and local IP — never commit it
+sdkconfig
+sdkconfig.old
+
+# Dataset caches (~60 GB total — download with test/download_coco_vww.py)
+test/coco_cache/
+test/vww_data/
+
+# Python environments and caches
+**/__pycache__/
+**/.venv*/
+*.pyc
+*.pyo
+
+# LaTeX build artifacts
+*.log
+*.aux
+*.out
+*.toc
+*.synctex.gz
+
+# Editor
+.vscode/

@@ -1,0 +1,120 @@
+menu "Application Configuration"
+
+config TFLITE_USE_BSP
+    bool
+    default n
+
+choice BSP_SUPPORT
+    bool "Select BSP"
+    default TFLITE_USE_BSP_NONE
+    help
+       Select Board Support Package for your Board.
+
+    config TFLITE_USE_BSP_S3_EYE
+        bool "ESP32-S3-EYE"
+        select TFLITE_USE_BSP
+    config TFLITE_USE_BSP_KORVO_2
+        bool "ESP32-S3-KORVO-2"
+        select TFLITE_USE_BSP
+    config TFLITE_USE_BSP_KALUGA
+        bool "ESP32-S2-KALUGA-KIT"
+        select TFLITE_USE_BSP
+    config TFLITE_USE_BSP_NONE
+        bool "None"
+endchoice
+
+menu "Camera Configuration"
+depends on !TFLITE_USE_BSP
+config LCD_DISPLAY
+    bool "Enable LCD display (ST7789 viewfinder)"
+    default y
+    depends on CAMERA_MODULE_ESP_S3_EYE
+    help
+        After each inference, draw the camera frame on the onboard
+        ST7789 240×240 LCD. Uses esp_lcd directly (no LVGL/BSP needed).
+
+choice CAMERA_MODULE
+    bool "Select Camera Pinout"
+    default CAMERA_MODULE_ESP_S3_EYE
+    config CAMERA_MODULE_WROVER_KIT
+        bool "WROVER-KIT With OV2640 Module"
+    config CAMERA_MODULE_ESP_EYE
+        bool "ESP-EYE DevKit"
+    config CAMERA_MODULE_ESP_S2_KALUGA
+        bool "ESP32-S2-Kaluga-1 V1.3"
+    config CAMERA_MODULE_ESP_S3_EYE
+        bool "ESP-S3-EYE DevKit"
+    config CAMERA_MODULE_AI_THINKER
+        bool "ESP32-CAM by AI-Thinker"
+    config CAMERA_MODULE_CUSTOM
+        bool "Custom Camera Pinout"
+endchoice
+endmenu
+
+menu "WiFi Configuration"
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "MyWiFi"
+        help
+            SSID of the WiFi network to connect to.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "password"
+        help
+            Password of the WiFi network.
+endmenu
+
+menu "MQTT Configuration"
+    config MQTT_BROKER_IP
+        string "MQTT Broker IP"
+        default "192.168.1.100"
+        help
+            IP address of the MQTT broker (mosquitto on PC).
+
+    config MQTT_BROKER_PORT
+        int "MQTT Broker Port"
+        default 1883
+        range 1 65535
+
+    config MQTT_TOPIC
+        string "MQTT Topic"
+        default "alarm/person"
+        help
+            Topic on which alarm events are published.
+
+    config MQTT_STATS_TOPIC
+        string "MQTT Stats Topic"
+        default "alarm/stats"
+        help
+            Topic on which per-layer inference timing statistics are published
+            (requires COLLECT_CPU_STATS build flag).
+endmenu
+
+menu "Alarm Configuration"
+    config ALARM_THRESHOLD_PCT
+        int "Person detection threshold (%)"
+        default 50
+        range 1 99
+        help
+            Minimum confidence score (0-100) to trigger an alarm.
+
+    config ALARM_COOLDOWN_SEC
+        int "Alarm cooldown (seconds)"
+        default 10
+        range 1 3600
+        help
+            Minimum interval between consecutive alarm publications.
+
+    config SCORE_WINDOW
+        int "Moving-average window size (frames)"
+        default 5
+        range 1 16
+        help
+            Number of consecutive frames averaged before applying the alarm
+            threshold. Larger values suppress single-frame false positives at
+            the cost of higher detection latency
+            (latency ≈ window × 351 ms at the current inference rate).
+endmenu
+
+endmenu

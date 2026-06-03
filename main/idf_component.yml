@@ -1,0 +1,5 @@
+dependencies:
+  espressif/esp-tflite-micro:
+    version: "*"
+    override_path: "/home/andrea/esp-tflite-micro"
+  espressif/esp32-camera: ~2.0.5
