@@ -1,4 +1,9 @@
-# Smart Visual Alarm System
+# Smart Visual Alarm System — `experiment/sram-arena` branch
+
+> **Branch closed — results below.**
+> Moves the TFLite tensor arena from PSRAM to internal SRAM and measures the effect on inference latency.
+
+---
 
 TinyML person-detection alarm on the **ESP32-S3-EYE**: fully on-device inference with MobileNetV1 via TensorFlow Lite for Microcontrollers, MQTT event publishing, and real-time Telegram notifications.
 
