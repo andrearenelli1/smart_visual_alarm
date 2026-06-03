@@ -35,7 +35,7 @@ On-Device Person Detection with Notification}
 \maketitle
 
 \begin{abstract}
-Deploying ML inference directly on microcontrollers eliminates bandwidth overhead and privacy exposure inherent in cloud-based video surveillance. The main challenge is fitting a viable vision model within the severe memory and compute constraints of embedded hardware while maintaining alarm-grade precision. This paper presents a Smart Visual Alarm System on the ESP32-S3-EYE that addresses this challenge through fully on-device person detection: a quantized MobileNetV1 running under TensorFlow Lite for Microcontrollers achieves 88.9\% precision at a false-alarm rate of only 7.3\%, with end-to-end inference latency of 351 ms ($\approx$2.85 FPS) on the embedded hardware. A three-frame moving-average filter further suppresses spurious triggers in live video. Alarm events are published via MQTT to a Python backend that delivers real-time Telegram notifications. Evaluated on 123,287 COCO 2017 images, the system achieves ROC-AUC = 0.814 and AP = 0.852.
+Deploying ML inference directly on microcontrollers eliminates bandwidth overhead and privacy exposure inherent in cloud-based video surveillance. The main challenge is fitting a viable vision model within the severe memory and compute constraints of embedded hardware while maintaining alarm-grade precision. This paper presents a Smart Visual Alarm System on the ESP32-S3-EYE that addresses this challenge through fully on-device person detection: a custom MobileNetV1 retrained with quantization-aware training (QAT) running under TensorFlow Lite for Microcontrollers achieves 88.4\% precision at a false-alarm rate of 8.9\%, with end-to-end inference latency of 351 ms ($\approx$2.85 FPS) on the embedded hardware. A three-frame moving-average filter further suppresses spurious triggers in live video. Alarm events are published via MQTT to a Python backend that delivers real-time Telegram notifications. Evaluated on 48,287 held-out COCO 2017 images, the system achieves ROC-AUC = 0.856 and AP = 0.877.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -50,7 +50,7 @@ edge AI, TinyML
 The proliferation of low-cost cameras in homes, offices, and public spaces has made video-based surveillance a cornerstone of modern security systems. Traditionally, these systems rely on continuous video streaming to remote servers or cloud platforms, where inference is performed centrally. This architecture, however, carries two fundamental costs. First, transmitting raw video over a network exposes sensitive visual data to interception, storage by third parties, and potential misuse, a serious privacy concern in residential and workplace deployments where occupants have a reasonable expectation not to be recorded and analysed off-premises, as exemplified by the well-documented Amazon Ring case~\cite{ftc2023ring}. Second, continuous video streaming is bandwidth-intensive: a single 720p camera at modest quality can consume several Mbps of uplink, making cloud-based inference economically and practically unviable in bandwidth-constrained or large-scale deployments. Edge computing addresses both issues by pushing inference directly to the data source, so that only high-level semantic events, rather than raw pixels, ever leave the device.
 
 Realising vision-based inference on embedded hardware is, however, far from straightforward. Microcontrollers (MCUs) typically operate with tens to hundreds of kilobytes of SRAM, no dedicated GPU, and clock speeds in the hundreds of MHz, orders of magnitude below the resources assumed by standard deep learning frameworks. Fitting a convolutional neural network capable of meaningful person detection within these constraints requires aggressive model compression (quantisation, architecture search) and careful memory management, all while meeting real-time latency requirements suitable for an alarm application.
-A complete Smart Visual Alarm System is presented that addresses the above challenges end-to-end on a single embedded device. The main contributions are: (i) a fully on-device person detection pipeline on the ESP32-S3-EYE, combining a quantized MobileNetV1 with a three-frame moving-average filter for robust alarm triggering without any cloud dependency, (ii) a lightweight MQTT-based event notification architecture in which raw video never leaves the device and only compact JSON descriptors are transmitted, (iii) a systematic evaluation on 123,287 COCO 2017 images demonstrating ROC-AUC $= 0.814$, AP $= 0.852$, and $88.9\%$ precision at a false-alarm rate of $7.3\%$, with a hardware inference latency of $351$ ms on the target MCU.
+A complete Smart Visual Alarm System is presented that addresses the above challenges end-to-end on a single embedded device. The main contributions are: (i) a fully on-device person detection pipeline on the ESP32-S3-EYE, combining a custom QAT MobileNetV1 with a three-frame moving-average filter for robust alarm triggering without any cloud dependency, (ii) a lightweight MQTT-based event notification architecture in which raw video never leaves the device and only compact JSON descriptors are transmitted, (iii) a custom MobileNetV1 retrained with quantization-aware training that recovers the accuracy degraded by post-training quantisation, outperforming the stock PTQ int8 model (ROC-AUC\,=\,0.856 vs.\ 0.823 on the held-out test set) at zero additional inference cost, and (iv) a systematic evaluation on 48,287 held-out COCO 2017 images (training offset 70{,}000) demonstrating ROC-AUC $= 0.856$, AP $= 0.877$, and $88.4\%$ precision at a false-alarm rate of $8.9\%$ (firmware default $\theta\!=\!0.60$), with a hardware inference latency of $351$ ms on the target MCU.
 % ─────────────────────────────────────────────────────────────────────────────
 \section{System Architecture}
 \label{sec:arch}
@@ -129,10 +129,15 @@ Power supply   & USB Type-C, 5\,V \\
 
 TFLite Micro \cite{tflitemicro} operates on a statically allocated
 100\,KB tensor arena placed in PSRAM to preserve on-chip SRAM for the
-RTOS and network stacks. Input images are resized to $96\!\times\!96$
+RTOS and network stacks (relocating the arena to internal SRAM yielded
+no measurable latency improvement and disrupted LCD DMA transfers,
+so PSRAM allocation was retained). Input images are resized to $96\!\times\!96$
 pixels and converted to signed 8-bit integers before feeding the
 quantized MobileNetV1 model. The model outputs a \emph{person score}
-dequantised to float.
+dequantised to float. The deployed model is a custom MobileNetV1
+retrained with quantization-aware training (QAT), replacing the
+stock post-training-quantised model shipped with the
+\texttt{esp-tflite-micro} repository~\cite{esptflitemicro}.
 
 \subsubsection{MobileNetV1 Architecture}
 
@@ -231,12 +236,50 @@ ${\approx}7.2$\,MMAC.
 
 
 
-The shipped model uses \emph{post-training linear quantization}
-\cite{tflitemicro}: each weight is mapped to a signed 8-bit integer via
-$r = S(q-Z)$, where $S$ is a per-channel scale and $Z$ is the
-zero-point. This compresses storage from ${\approx}1{,}174$\,KB
-(float32 equivalent) to 293.5\,KB on flash, a $4{\times}$ reduction,
-without additional training.
+The original \texttt{esp-tflite-micro} model uses \emph{post-training
+linear quantization} (PTQ)~\cite{tflitemicro}: each weight is mapped to
+a signed 8-bit integer via $r = S(q-Z)$, where $S$ is a per-channel
+scale and $Z$ is the zero-point. This compresses storage without
+additional training, but calibrating quantisation scales post-hoc
+introduces rounding noise that the model was not trained to tolerate,
+degrading accuracy (see Section~\ref{sec:detquality}).
+
+\subsubsection{Quantization-Aware Training}
+
+Quantization-aware training~\cite{qat} addresses the PTQ accuracy gap
+by simulating quantisation noise during the forward pass via
+\emph{fake-quant} operators inserted after each weight and activation
+tensor. The model therefore learns weight distributions that are robust
+to 8-bit rounding, yielding a quantised network whose accuracy closely
+tracks the float32 baseline.
+
+The custom model retrains the MobileNetV1 backbone
+($\alpha\!=\!0.25$) using the Keras QAT API. Three architectural
+adaptations were required to train from the available ImageNet-pretrained
+weights and export cleanly to TFLite:
+\begin{itemize}
+  \item \textbf{Gray-to-RGB adapter.} The OV2640 camera delivers
+    grayscale frames, but the ImageNet-pretrained backbone expects a
+    3-channel input. A \texttt{Concatenate} layer replicates the single
+    luma channel three times before entering the backbone. This maps to
+    a \texttt{CONCATENATION} op in the TFLite graph.
+  \item \textbf{Global average pooling.} \texttt{GlobalAveragePooling2D}
+    computes the spatial mean over $H{\times}W$ and exports to TFLite
+    as a \texttt{MEAN} op (rather than \texttt{AVERAGE\_POOL\_2D} used
+    by a fixed-kernel pooling layer).
+  \item \textbf{Dense classifier head.} A \texttt{Dense(2,
+    activation=``softmax'')} layer replaces the $1{\times}1$
+    Conv2D classifier of the stock model, mapping to a
+    \texttt{FULLY\_CONNECTED} op followed by \texttt{SOFTMAX}.
+\end{itemize}
+The resulting TFLite graph uses seven ops:
+\texttt{CONV\_2D}, \texttt{DEPTHWISE\_CONV\_2D},
+\texttt{FULLY\_CONNECTED}, \texttt{MEAN}, \texttt{CONCATENATION},
+\texttt{SOFTMAX}, and \texttt{QUANTIZE}.
+Model size is 311.5\,KB int8 (vs.\ 308.2\,KB for PTQ), a negligible
+increase. Hardware inference latency is unchanged at ${\approx}351$\,ms,
+as the added \texttt{MEAN} and \texttt{FULLY\_CONNECTED} ops each
+contribute less than 1\,ms.
 
 \subsection{Detection Logic and Alarm Trigger}
 
@@ -249,7 +292,7 @@ noise:
 At ${\approx}2.85$\,FPS, $W\!=\!3$ spans ${\approx}1$\,s, sufficient to
 suppress single-frame false positives while preserving sustained detections.
 An alarm fires when $\bar{s}_t \geq \theta$ and at least $C_{\min}$
-seconds have elapsed (defaults: $\theta\!=\!0.70$, $C_{\min}\!=\!10$\,s);
+seconds have elapsed (defaults: $\theta\!=\!0.60$, $C_{\min}\!=\!10$\,s);
 all three parameters are exposed as \texttt{menuconfig} options.
 On alarm, the firmware blinks the onboard LED and publishes:
 \begin{lstlisting}[language={}]
@@ -266,7 +309,7 @@ during a live deployment.
   \caption{Raw per-frame person score (blue) and its 3-frame
            moving average (red) recorded on the ESP32-S3-EYE during
            a live session. The green dashed line marks the alarm
-           threshold $\theta=0.70$. The filter attenuates transient
+           threshold $\theta=0.60$. The filter attenuates transient
            spikes visible in the raw signal while preserving the
            sustained detection event around frames 50--80.}
   \label{fig:livescore}
@@ -404,16 +447,49 @@ $8.3{\times}$ larger input, invoke time reaches $1{,}919$\,ms
 not evaluated for detection quality on this hardware.
 
 \subsection{Detection Quality}
+\label{sec:detquality}
 
-The deployed \texttt{.tflite} model was evaluated on 123{,}287 images
-from COCO\,2017 (val\,+\,train), labelled in the Visual Wake Words
-(person / no-person) layout \cite{vww}. Preprocessing replicates the
+Both models were evaluated on the held-out test set: the 48{,}287
+COCO\,2017 train images from index 70{,}000 onward, i.e.\ the portion
+never seen during QAT training. Labels follow the Visual Wake Words
+(person / no-person) layout~\cite{vww}. Preprocessing replicates the
 firmware pipeline: BT.601 luma conversion and signed-8-bit quantisation.
+
+\subsubsection{PTQ vs.\ QAT accuracy comparison}
+
+Table~\ref{tab:ptq_vs_qat} compares the stock PTQ model against the
+custom QAT model on the held-out test set: COCO\,2017 train images
+from index 70{,}000 onward (48{,}287 images), never seen during QAT
+training. At $\theta\!=\!0.60$, QAT reduces FAR from 11.6\,\% to
+8.9\,\% ($-2.7$\,pp) and raises precision from 85.6\,\% to 88.4\,\%
+($+2.8$\,pp) with a negligible F1 change (+0.002). AUC rises from
+0.823 to 0.856 ($+0.033$).
 
 \begin{table}[h]
 \centering
-\caption{Classifier performance on 123{,}287 COCO\,2017 images at
-         representative thresholds.}
+\caption{PTQ vs.\ QAT on 48{,}287 held-out COCO\,2017 images
+         ($\theta\!=\!0.60$, images[70000:]).}
+\label{tab:ptq_vs_qat}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+\textbf{Model} & \textbf{AUC} & \textbf{AP} & \textbf{Prec.} & \textbf{Recall} & \textbf{F1} & \textbf{FAR} \\
+\midrule
+PTQ int8 (stock) & 0.823 & 0.858 & 85.6\,\% & 58.4\,\% & 0.695 & 11.6\,\% \\
+QAT int8 (ours)  & \textbf{0.856} & \textbf{0.877} & \textbf{88.4\,\%} & 57.5\,\% & \textbf{0.697} & \textbf{8.9\,\%} \\
+\midrule
+$\Delta$ (QAT$-$PTQ) & +0.033 & +0.019 & +2.8\,pp & $-$0.9\,pp & +0.002 & $-$2.7\,pp \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\subsubsection{Test-set evaluation}
+
+\begin{table}[h]
+\centering
+\caption{QAT model performance on 48{,}287 held-out COCO\,2017 images
+         at representative thresholds.}
 \label{tab:thresholds}
 \resizebox{\columnwidth}{!}{%
 \begin{tabular}{@{}ccccccc@{}}
@@ -421,32 +497,32 @@ firmware pipeline: BT.601 luma conversion and signed-8-bit quantisation.
 $\boldsymbol{\theta}$ & \textbf{Prec.} & \textbf{Rec.} & \textbf{F1} &
   \textbf{Acc.} & \textbf{FAR} & \textbf{Profile} \\
 \midrule
-0.21 & 64.8\,\% & 90.7\,\% & 0.756 & 68.3\,\% & 58.1\,\% & High recall \\
-0.26 & 68.2\,\% & 86.1\,\% & \textbf{0.761} & 70.7\,\% & 47.5\,\% & Max F1 \\
-\textbf{0.70} & \textbf{88.9\,\%} & \textbf{49.3\,\%} & \textbf{0.634}
-  & \textbf{69.2\,\%} & \textbf{7.30\,\%} & \textbf{Firmware default} \\
-0.92 & 98.3\,\% & 20.3\,\% & 0.337 & 56.6\,\% & 0.41\,\% & High precision \\
+0.24 & 73.2\,\% & 87.9\,\% & \textbf{0.799} & 76.1\,\% & 37.8\,\% & Max F1 \\
+0.33 & 77.7\,\% & 80.8\,\% & 0.793 & 77.1\,\% & 27.3\,\% & Recall $\geq$80\,\% \\
+\textbf{0.60} & \textbf{88.4\,\%} & \textbf{57.5\,\%} & \textbf{0.697}
+  & \textbf{73.0\,\%} & \textbf{8.9\,\%} & \textbf{Firmware default} \\
+0.95 & 98.1\,\% & 17.3\,\% & 0.294 & 55.1\,\% & 0.4\,\% & High precision \\
 \bottomrule
 \end{tabular}%
 }
 \end{table}
 
-Overall, ROC-AUC\,=\,0.814 and AP\,=\,0.852 (Figs.~\ref{fig:roc}--\ref{fig:sweep})
+Overall, ROC-AUC\,=\,0.856 and AP\,=\,0.877 on the held-out test set
+(Figs.~\ref{fig:roc}--\ref{fig:sweep})
 confirm good discriminative capacity despite int8 quantisation. The
-firmware-default $\theta\!=\!0.70$ was selected by combining
+firmware-default $\theta\!=\!0.60$ was selected by combining
 benchmark results with on-site validation in a typical indoor
-environment: thresholds below ${\approx}0.65$ produced false alarms
+environment: thresholds below ${\approx}0.55$ produced false alarms
 on low-texture scenes (e.g.\ ceiling, blank walls), indicating a
 positive bias in featureless inputs.
-At $\theta\!=\!0.70$, precision is 88.9\,\% with FAR\,=\,7.3\,\%.
-Per-frame recall (49.3\,\%) is partially compensated by the moving-average
+At $\theta\!=\!0.60$, precision is 88.4\,\% with FAR\,=\,8.9\,\%.
+Per-frame recall (57.5\,\%) is partially compensated by the moving-average
 filter: on sustained person presence consecutive frames produce correlated
 high scores that consistently exceed the threshold, while isolated false
 positives are averaged down by surrounding low-score frames, effectively
 reducing the live false-alarm rate below the per-frame FAR reported here.
 
-
-Fig.~\ref{fig:cm} shows the confusion matrices: at $\theta{=}0.70$ false
+Fig.~\ref{fig:cm} shows the confusion matrices: at $\theta{=}0.60$ false
 negatives far outnumber false positives, confirming the system errs toward
 silence. COCO\,2017 covers a wide range of non-surveillance scenes and
 predominantly 4:3 images whose square-crop resizing distorts person
@@ -456,8 +532,8 @@ underestimate operational performance.
 \begin{figure}[h]
   \centering
   \includegraphics[width=0.8\columnwidth]{confusion_matrix.png}
-  \caption{Confusion matrices at $\theta \in \{0.26, 0.50, 0.70, 0.92\}$.
-           Bottom-left: firmware default $\theta{=}0.70$.}
+  \caption{Confusion matrices at $\theta \in \{0.26, 0.50, 0.60, 0.92\}$.
+           Bottom-left: firmware default $\theta{=}0.60$.}
   \label{fig:cm}
 \end{figure}
 
@@ -466,14 +542,14 @@ underestimate operational performance.
   \begin{minipage}[t]{0.49\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{threshold_sweep.png}
-    \caption{Metrics vs.\ $\theta$. Dashed: default ($\theta{=}0.70$).}
+    \caption{Metrics vs.\ $\theta$. Dashed: default ($\theta{=}0.60$).}
     \label{fig:sweep}
   \end{minipage}
   \hfill
   \begin{minipage}[t]{0.49\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{pr_curve.png}
-    \caption{PR curve (AP\,=\,0.852).}
+    \caption{PR curve (AP\,=\,0.877).}
     \label{fig:pr}
   \end{minipage}
 \end{figure}
@@ -481,7 +557,7 @@ underestimate operational performance.
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.7\columnwidth]{roc_curve.png}
-  \caption{ROC curve (AUC\,=\,0.814). Dashed diagonal: random classifier.}
+  \caption{ROC curve (AUC\,=\,0.856). Dashed diagonal: random classifier.}
   \label{fig:roc}
 \end{figure}
 
@@ -493,21 +569,23 @@ This paper presented a complete Smart Visual Alarm System running fully on the
 ESP32-S3-EYE: on-device TFLite Micro inference, moving-average alarm
 logic, MQTT\,QoS\,1 event publication, and Python/Telegram notification.
 Raw video is never transmitted: only compact JSON descriptors leave the
-device. Evaluation on 123{,}287 COCO\,2017 images yields
-ROC-AUC\,=\,0.814 and AP\,=\,0.852. The firmware threshold
-$\theta\!=\!0.70$ provides 88.9\,\% precision at 7.3\,\% FAR, and the
-three-frame moving-average filter further reduces the effective false-alarm
-rate on live video. A MobileNetV2 candidate was measured at
-$1{,}919$\,ms (0.52\,FPS, Table~\ref{tab:v2_efficiency}),
-$5.5{\times}$ slower than MobileNetV1 and incompatible with the
-1\,s alarm-window requirement, confirming that any accuracy improvement
-must come at lower---not higher---computational cost on this hardware.
+device. A custom MobileNetV1 was retrained with quantization-aware
+training, recovering the accuracy degraded by post-training quantisation:
+on the held-out test set (48{,}287 COCO\,2017 images, offset 70{,}000),
+QAT int8 achieves AUC\,=\,0.856 and AP\,=\,0.877 vs.\ AUC\,=\,0.823
+and AP\,=\,0.858 for the stock PTQ int8, at identical inference cost
+(351\,ms, ${\approx}2.85$\,FPS) and a 312\,KB model footprint
+(Table~\ref{tab:ptq_vs_qat}). The firmware threshold
+$\theta\!=\!0.60$ provides 88.4\,\% precision at 8.9\,\% FAR,
+and the three-frame moving-average filter further reduces the
+effective false-alarm rate on live video.
+A MobileNetV2 candidate was measured at $1{,}919$\,ms
+(0.52\,FPS, Table~\ref{tab:v2_efficiency}), $5.5{\times}$ slower than
+MobileNetV1 and incompatible with the 1\,s alarm-window requirement,
+confirming that any accuracy improvement must come at lower---not
+higher---computational cost on this hardware.
 
-Future work includes: applying quantization-aware training (QAT) to the
-existing MobileNetV1 backbone, which is expected to raise recall
-(currently 49.3\,\% per-frame) by recovering the accuracy degraded
-during post-training quantisation, at zero additional inference cost;
-replacing the backbone with MCUNet \cite{mcunet},
+Future work includes: replacing the backbone with MCUNet~\cite{mcunet},
 which targets higher accuracy at comparable or lower memory and MAC
 budgets; and re-benchmarking on a surveillance-specific dataset (covering
 typical indoor and outdoor camera viewpoints) to obtain accuracy
@@ -543,6 +621,11 @@ in \textit{NeurIPS}, 2020.
 \bibitem{mobilenetv2}
 M.~Sandler \textit{et al.}, ``MobileNetV2: Inverted Residuals and Linear
 Bottlenecks,'' in \textit{Proc.\ CVPR}, 2018.
+
+\bibitem{qat}
+B.~Jacob \textit{et al.}, ``Quantization and Training of Neural Networks
+for Efficient Integer-Arithmetic-Only Inference,'' in \textit{Proc.\ CVPR},
+2018.
 
 \bibitem{mobilenetv2esp32}
 ai4iot, ``Person Detection on ESP32-S3,'' GitHub, 2023.

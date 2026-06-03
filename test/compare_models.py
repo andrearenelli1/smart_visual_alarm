@@ -534,7 +534,7 @@ def parse_args():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    default_ptq = Path(__file__).parent / "models/model_ptq_int8.tflite"
+    default_ptq = Path(__file__).parent / "models/model_original_main.tflite"
     default_qat = Path(__file__).parent / "models/model_qat_int8.tflite"
     p.add_argument("--ptq",      type=Path, default=default_ptq)
     p.add_argument("--qat",      type=Path, default=default_qat)
