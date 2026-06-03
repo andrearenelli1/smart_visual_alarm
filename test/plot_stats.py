@@ -1,7 +1,7 @@
-# Generate two separate latency plots from backend/stats_log.csv:
-#   stats_boxplot.png  : box plot of Conv2D / DepthwiseConv2D / Total
-#   stats_breakdown.png: stacked bar of mean latency by layer type
-# Output goes to test/results/ to match the report's graphicspath.
+# Generate two latency column plots for the IEEE report:
+#   stats_breakdown.png  : Conv2D vs DepthwiseConv2D mean latency (bar chart)
+#   stats_plot_layer.png : per-block mean latency (initial Conv + DS1-DS13)
+# Both read from test/hardware_log/; output goes to test/results/.
 
 import csv
 import shutil
@@ -12,16 +12,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-CSV_PATH = Path(__file__).parent / "hardware_log" / "stats_log.csv"
-OUT_DIR  = Path(__file__).parent / "results"
+STATS_CSV = Path(__file__).parent / "hardware_log" / "stats_log.csv"
+ARCH_CSV  = Path(__file__).parent / "hardware_log" / "arch_log.csv"
+OUT_DIR   = Path(__file__).parent / "results"
 
-LAYER_COLORS = {
-    "Conv2D":        "#4e79a7",
-    "DepthwiseConv": "#f28e2b",
-    "FC":            "#e15759",
-    "Pool":          "#76b7b2",
-    "Add":           "#59a14f",
-    "Mul":           "#edc948",
+COLORS = {
+    "conv":  "#4e79a7",
+    "dw":    "#f28e2b",
+    "other": "#bab0ac",
 }
 
 
@@ -49,122 +47,98 @@ def _ieee_style():
     plt.rcParams.update(base)
 
 
-def _load():
-    with open(CSV_PATH, newline="") as f:
+def _load(path):
+    with open(path, newline="") as f:
         return list(csv.DictReader(f))
 
 
 def _save(fig, path):
     fig.savefig(path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved → {path}")
-
-
-def plot_boxplot(rows):
-    n = len(rows)
-    conv  = [float(r["conv_ms"]) for r in rows]
-    dc    = [float(r["dc_ms"])   for r in rows]
-    total = [float(r["total_ms"]) for r in rows]
-
-    bp_data   = [conv, dc, total]
-    bp_labels = ["Conv", "DW Conv", "Total"]
-    bp_colors = [LAYER_COLORS["Conv2D"], LAYER_COLORS["DepthwiseConv"], "#59a14f"]
-
-    fig, ax = plt.subplots(figsize=(5, 4))
-    bp = ax.boxplot(bp_data, patch_artist=True, widths=0.42,
-                    medianprops=dict(color="black", linewidth=1.2),
-                    whiskerprops=dict(linewidth=0.7),
-                    capprops=dict(linewidth=0.7),
-                    flierprops=dict(marker=".", markersize=2, alpha=0.35,
-                                    markeredgewidth=0))
-    for patch, c in zip(bp["boxes"], bp_colors):
-        patch.set_facecolor(c)
-        patch.set_alpha(0.70)
-
-    ax.set_xticks([1, 2, 3])
-    ax.set_xticklabels(bp_labels)
-    ax.set_ylabel("Latency (ms)")
-    ax.set_title(f"Inference Latency Distribution ($n={n}$)")
-    ax.grid(True, axis="y", alpha=0.35)
-    ax.set_axisbelow(True)
-
-    for i, d in enumerate(bp_data, 1):
-        med = _st.median(d)
-        ax.text(i, med + 0.35, f"{med:.0f}",
-                ha="center", va="bottom", fontsize=7)
-
-    ax.text(0.97, 0.03, r"FC, Pool, Add, Mul $<$1$\,$ms",
-            transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=6, color="gray", style="italic")
-
-    fig.tight_layout()
-    _save(fig, OUT_DIR / "stats_boxplot.png")
+    print(f"Saved -> {path}")
 
 
 def plot_breakdown(rows):
+    """Left column: Conv2D vs DW Conv mean+std horizontal bar chart."""
     n = len(rows)
+    conv  = [float(r["conv_ms"]) for r in rows]
+    dw    = [float(r["dc_ms"])   for r in rows]
 
-    keys   = ["conv_ms", "dc_ms", "fc_ms", "pool_ms", "add_ms", "mul_ms"]
-    labels = ["Conv2D",  "DepthwiseConv", "FC", "Pool", "Add", "Mul"]
-    means  = {lbl: sum(float(r[k]) for r in rows) / n
-              for lbl, k in zip(labels, keys)}
+    means = [_st.mean(conv), _st.mean(dw)]
+    stds  = [_st.stdev(conv), _st.stdev(dw)]
+    labels = ["Conv2D\n(3×3 + all 1×1)", "DW Conv\n(3×3)"]
+    colors = [COLORS["conv"], COLORS["dw"]]
 
-    BAR_W = 0.55
-    XLIM  = 0.65
-    xf_lo = (-BAR_W / 2 + XLIM) / (2 * XLIM)
-    xf_hi = ( BAR_W / 2 + XLIM) / (2 * XLIM)
+    fig, ax = plt.subplots(figsize=(3.2, 2.8))
+    bars = ax.barh(labels, means, xerr=stds, color=colors, alpha=0.85,
+                   height=0.5, error_kw=dict(ecolor="black", capsize=3,
+                                             elinewidth=0.8, capthick=0.8))
+    for bar, mean, std in zip(bars, means, stds):
+        ax.text(mean + std + 0.5, bar.get_y() + bar.get_height() / 2,
+                f"{mean:.1f} ms", va="center", ha="left", fontsize=7.5)
 
-    fig, ax = plt.subplots(figsize=(3.4, 5.5))
-    bottom = 0.0
-
-    v_conv = means["Conv2D"]
-    ax.bar(0, v_conv, bottom=bottom, color=LAYER_COLORS["Conv2D"],
-           alpha=0.85, width=BAR_W)
-    ax.text(0, bottom + v_conv / 2,
-            f"Conv ($3{{\\times}}3$ and $1{{\\times}}1$)\nclassic conv layers\n{v_conv:.1f} ms",
-            ha="center", va="center", fontsize=6.5, color="white",
-            fontweight="bold", linespacing=1.4)
-    bottom += v_conv
-
-    v_dc = means["DepthwiseConv"]
-    ax.bar(0, v_dc, bottom=bottom, color=LAYER_COLORS["DepthwiseConv"],
-           alpha=0.82, width=BAR_W)
-    ax.axhline(bottom, xmin=xf_lo, xmax=xf_hi,
-               color="white", linewidth=0.6, zorder=3)
-    ax.text(0, bottom + v_dc / 2,
-            f"DW Conv ($3{{\\times}}3$)\n{v_dc:.1f} ms",
-            ha="center", va="center", fontsize=6.5, color="white",
-            fontweight="bold", linespacing=1.4)
-    bottom += v_dc
-
-    for lbl, key in [("FC", "fc_ms"), ("Pool", "pool_ms"),
-                     ("Add", "add_ms"), ("Mul", "mul_ms")]:
-        v = means[lbl]
-        if v < 0.05:
-            continue
-        ax.bar(0, v, bottom=bottom, color=LAYER_COLORS[lbl],
-               alpha=0.85, width=BAR_W)
-        bottom += v
-
-    ax.text(0.97, 0.02,
-            "FC, Pool, Add, Mul\n$<$1$\\,$ms",
-            transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=6, color="gray", style="italic")
-
-    ax.set_xlim(-XLIM, XLIM)
-    ax.set_xticks([])
-    ax.set_ylabel("Latency (ms)")
-    ax.set_title(f"Mean Latency Breakdown ($n={n}$)")
-    ax.grid(True, axis="y", alpha=0.35)
+    ax.set_xlabel("Mean latency (ms)")
+    ax.set_title(f"Layer-type breakdown ($n={n}$)")
+    ax.grid(True, axis="x", alpha=0.35)
     ax.set_axisbelow(True)
-
+    ax.set_xlim(0, max(means) + max(stds) + 30)
     fig.tight_layout()
     _save(fig, OUT_DIR / "stats_breakdown.png")
 
 
+def plot_per_block(rows):
+    """Right column: per-block mean latency from arch_log.csv."""
+    n = len(rows)
+    ds_keys = [f"ds{i}_ms" for i in range(1, 14)]
+
+    conv_mean = _st.mean(float(r["conv_ms"]) for r in rows)
+    ds_means  = [_st.mean(float(r[k]) for r in rows) for k in ds_keys]
+    gap_mean  = _st.mean(float(r["gap_ms"])  for r in rows)
+
+    # Build bar data: Conv3x3, DS1–DS13, GAP
+    values = [conv_mean] + ds_means + [gap_mean]
+    block_labels = ["Conv 3×3"] + [f"DS{i}" for i in range(1, 14)] + ["GAP"]
+
+    # Color: opening conv = conv color, DS blocks = alternating dw/conv, GAP = other
+    bar_colors = [COLORS["conv"]]
+    for _ in range(13):
+        bar_colors.append(COLORS["dw"])
+    bar_colors.append(COLORS["other"])
+
+    fig, ax = plt.subplots(figsize=(3.4, 5.0))
+    y = range(len(values))
+    ax.barh(list(y), values, color=bar_colors, alpha=0.85, height=0.7)
+
+    for yi, v in zip(y, values):
+        if v >= 0.5:
+            ax.text(v + 0.3, yi, f"{v:.1f}", va="center", ha="left", fontsize=6.5)
+
+    ax.set_yticks(list(y))
+    ax.set_yticklabels(block_labels, fontsize=7.5)
+    ax.invert_yaxis()
+    ax.set_xlabel("Mean latency (ms)")
+    ax.set_title(f"Per-block latency ($n={n}$)")
+    ax.grid(True, axis="x", alpha=0.35)
+    ax.set_axisbelow(True)
+    ax.set_xlim(0, max(values) + 8)
+
+    from matplotlib.patches import Patch
+    legend = [Patch(color=COLORS["conv"], alpha=0.85, label="Conv2D (classic)"),
+              Patch(color=COLORS["dw"],   alpha=0.85, label="DS block (DW+PW)"),
+              Patch(color=COLORS["other"],alpha=0.85, label="Other")]
+    ax.legend(handles=legend, fontsize=6, loc="lower right")
+
+    fig.tight_layout()
+    _save(fig, OUT_DIR / "stats_plot_layer.png")
+
+
 if __name__ == "__main__":
     _ieee_style()
-    rows = _load()
-    print(f"Loaded {len(rows)} samples from {CSV_PATH}")
-    plot_boxplot(rows)
-    plot_breakdown(rows)
+
+    stats_rows = _load(STATS_CSV)
+    arch_rows  = _load(ARCH_CSV)
+    print(f"stats_log: {len(stats_rows)} samples")
+    print(f"arch_log:  {len(arch_rows)} samples")
+
+    plot_breakdown(stats_rows)
+    plot_per_block(arch_rows)

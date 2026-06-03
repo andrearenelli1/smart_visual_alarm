@@ -353,41 +353,32 @@ Other layers     & \multicolumn{4}{c}{$<$1\,ms (negligible)} \\
 
 Conv2D (opening layer + 13 pointwise $1{\times}1$) accounts for
 ${\approx}92\,\%$ of invoke time; DepthwiseConv2D contributes
-${\approx}8\,\%$ (Figs.~\ref{fig:latency_box}--\ref{fig:latency_layer}).
-Early DS blocks on larger feature maps are 1.5--3$\times$ slower than
-later ones. Total: 351\,ms (${\approx}2.85$\,FPS).
+${\approx}8\,\%$ (Fig.~\ref{fig:latency_cols}).
+Early DS blocks on larger feature maps are up to $3{\times}$ slower than
+later ones (DS\,1--3 vs DS\,6--13). Total: 351\,ms (${\approx}2.85$\,FPS).
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.8\columnwidth]{stats_boxplot.png}
-  \caption{Inference latency distribution ($n\!=\!1{,}479$ frames).
-           Conv and DW Conv account for ${\approx}92\,\%$ and
-           ${\approx}8\,\%$ of total invoke time, respectively.
-           FC, Pool, Add, and Mul are below 1\,ms.}
-  \label{fig:latency_box}
-\end{figure}
-
-\begin{figure}[h]
-  \centering
-  \begin{minipage}[t]{0.435\columnwidth}
+  \begin{minipage}[t]{0.44\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{stats_breakdown.png}
-    \caption{Mean latency breakdown by layer type. Conv2D (opening
-             $3{\times}3$ plus thirteen $1{\times}1$ PW blocks)
-             dominates at ${\approx}323$\,ms; DW Conv contributes
-             ${\approx}27$\,ms.}
+    \caption{Mean latency by layer type ($n\!=\!1{,}479$). Conv2D
+             (opening $3{\times}3$ + thirteen $1{\times}1$ PW)
+             dominates at $323$\,ms; DW Conv contributes $27$\,ms.
+             Error bars: $\pm1\sigma$.}
     \label{fig:latency_breakdown}
   \end{minipage}
   \hfill
-  \begin{minipage}[t]{0.505\columnwidth}
+  \begin{minipage}[t]{0.50\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{stats_plot_layer.png}
-    \caption{Per-block mean latency. Early DS blocks (DS\,1--3) operating
-             on larger feature maps are up to $3{\times}$ slower than
-             later ones. Conv $3{\times}3$ contributes only 5.1\,ms
-             (${\approx}1.5\,\%$).}
+    \caption{Per-block mean latency ($n\!=\!1{,}560$). The opening
+             Conv $3{\times}3$ contributes only 5.1\,ms; early DS
+             blocks (DS\,1--3) on larger feature maps are up to
+             $3{\times}$ slower than later ones.}
     \label{fig:latency_layer}
   \end{minipage}
+  \label{fig:latency_cols}
 \end{figure}
 
 \subsection{Model Efficiency Metrics}
@@ -509,12 +500,8 @@ $\boldsymbol{\theta}$ & \textbf{Prec.} & \textbf{Rec.} & \textbf{F1} &
 
 Overall, ROC-AUC\,=\,0.856 and AP\,=\,0.877 on the held-out test set
 (Figs.~\ref{fig:roc}--\ref{fig:sweep})
-confirm good discriminative capacity despite int8 quantisation. The
-firmware-default $\theta\!=\!0.60$ was selected by combining
-benchmark results with on-site validation in a typical indoor
-environment: thresholds below ${\approx}0.55$ produced false alarms
-on low-texture scenes (e.g.\ ceiling, blank walls), indicating a
-positive bias in featureless inputs.
+confirm good discriminative capacity despite int8 quantisation. The firmware-default $\theta\!=\!0.60$ was selected by combining
+benchmark results with on-site validation in a typical indoor environment.
 At $\theta\!=\!0.60$, precision is 88.4\,\% with FAR\,=\,8.9\,\%.
 Per-frame recall (57.5\,\%) is partially compensated by the moving-average
 filter: on sustained person presence consecutive frames produce correlated
