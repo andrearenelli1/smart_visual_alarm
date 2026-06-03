@@ -49,7 +49,7 @@ _count   = [0]
 # ── Data model ────────────────────────────────────────────────────────────────
 def _empty_sample():
     return {"total": 0, "conv": 0,
-            "dw": [0] * 13, "pw": [0] * 13, "gap": 0}
+            "dw": [0] * 13, "pw": [0] * 13, "gap": 0, "other": 0}
 
 
 def _mean_sample(samples):
@@ -61,10 +61,11 @@ def _mean_sample(samples):
         m["total"] += s["total"]
         m["conv"]  += s["conv"]
         m["gap"]   += s["gap"]
+        m["other"] += s["other"]
         for i in range(13):
             m["dw"][i] += s["dw"][i]
             m["pw"][i] += s["pw"][i]
-    for k in ("total", "conv", "gap"):
+    for k in ("total", "conv", "gap", "other"):
         m[k] /= n
     for i in range(13):
         m["dw"][i] /= n
@@ -81,7 +82,8 @@ def on_message(client, userdata, msg):
             "conv":  float(data.get("conv",  0)),
             "dw":    [float(x) for x in data.get("dw", [0] * 13)],
             "pw":    [float(x) for x in data.get("pw", [0] * 13)],
-            "gap":   float(data.get("gap",  0)),
+            "gap":   float(data.get("gap",   0)),
+            "other": float(data.get("other", 0)),
         }
         with _lock:
             _samples.append(sample)
@@ -138,9 +140,10 @@ def _draw_right(ax, m, n):
     for i in range(13):
         values.append(m["dw"][i] + m["pw"][i])
     values.append(m["gap"])
+    values.append(m["other"])
 
-    labels = ["Conv 3x3"] + [f"DS{i}" for i in range(1, 14)] + ["GAP"]
-    bar_colors = [COLORS["conv"]] + [COLORS["dw"]] * 13 + [COLORS["other"]]
+    labels = ["Conv 3x3"] + [f"DS{i}" for i in range(1, 14)] + ["GAP", "Other"]
+    bar_colors = [COLORS["conv"]] + [COLORS["dw"]] * 13 + [COLORS["other"], COLORS["other"]]
 
     y = range(len(values))
     ax.barh(list(y), values, color=bar_colors, alpha=0.85, height=0.7)
@@ -204,13 +207,13 @@ def main():
         fields = (["total_ms", "conv_opening_ms"] +
                   [f"dw{i+1}_ms" for i in range(13)] +
                   [f"pw{i+1}_ms" for i in range(13)] +
-                  ["gap_ms"])
+                  ["gap_ms", "other_ms"])
         with open(out_csv, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=fields)
             w.writeheader()
             for s in snap:
                 row = {"total_ms": s["total"], "conv_opening_ms": s["conv"],
-                       "gap_ms": s["gap"]}
+                       "gap_ms": s["gap"], "other_ms": s["other"]}
                 for i in range(13):
                     row[f"dw{i+1}_ms"] = s["dw"][i]
                     row[f"pw{i+1}_ms"] = s["pw"][i]

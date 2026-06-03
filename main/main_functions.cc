@@ -160,15 +160,15 @@ void loop() {
   }
 
 #if defined(ARCH_PROFILER)
-  arch_profiler.PrintArchBreakdown();
   {
     ArchStats st = arch_profiler.GetStats();
+    printf("[profiler] total: %.2f ms\n", st.total_ms);
     char json[320];
     int pos = snprintf(json, sizeof(json),
       "{\"total\":%.2f,\"conv\":%.2f,"
       "\"dw\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],"
       "\"pw\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],"
-      "\"gap\":%.2f}",
+      "\"gap\":%.2f,\"other\":%.2f}",
       st.total_ms, st.conv_opening_ms,
       st.dw_ms[0],st.dw_ms[1],st.dw_ms[2],st.dw_ms[3],st.dw_ms[4],
       st.dw_ms[5],st.dw_ms[6],st.dw_ms[7],st.dw_ms[8],st.dw_ms[9],
@@ -176,7 +176,7 @@ void loop() {
       st.pw_ms[0],st.pw_ms[1],st.pw_ms[2],st.pw_ms[3],st.pw_ms[4],
       st.pw_ms[5],st.pw_ms[6],st.pw_ms[7],st.pw_ms[8],st.pw_ms[9],
       st.pw_ms[10],st.pw_ms[11],st.pw_ms[12],
-      st.gap_ms);
+      st.gap_ms, st.other_ms);
     (void)pos;
     mqtt_publisher_publish_stats(json);
   }
@@ -227,15 +227,15 @@ void run_inference(void *ptr) {
   }
 
 #if defined(ARCH_PROFILER)
-  arch_profiler.PrintArchBreakdown();
   {
     ArchStats st = arch_profiler.GetStats();
+    printf("[profiler] total: %.2f ms\n", st.total_ms);
     char json[320];
     snprintf(json, sizeof(json),
       "{\"total\":%.2f,\"conv\":%.2f,"
       "\"dw\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],"
       "\"pw\":[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],"
-      "\"gap\":%.2f}",
+      "\"gap\":%.2f,\"other\":%.2f}",
       st.total_ms, st.conv_opening_ms,
       st.dw_ms[0],st.dw_ms[1],st.dw_ms[2],st.dw_ms[3],st.dw_ms[4],
       st.dw_ms[5],st.dw_ms[6],st.dw_ms[7],st.dw_ms[8],st.dw_ms[9],
@@ -243,7 +243,7 @@ void run_inference(void *ptr) {
       st.pw_ms[0],st.pw_ms[1],st.pw_ms[2],st.pw_ms[3],st.pw_ms[4],
       st.pw_ms[5],st.pw_ms[6],st.pw_ms[7],st.pw_ms[8],st.pw_ms[9],
       st.pw_ms[10],st.pw_ms[11],st.pw_ms[12],
-      st.gap_ms);
+      st.gap_ms, st.other_ms);
     mqtt_publisher_publish_stats(json);
   }
   arch_profiler.ClearEvents();

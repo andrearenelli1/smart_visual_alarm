@@ -53,36 +53,51 @@ class ArchProfiler : public tflite::MicroProfilerInterface {
 
   void ClearEvents() { num_events_ = 0; }
 
+  // Tag-based parsing: works for both stock PTQ and QAT models.
   ArchStats GetStats() const {
     ArchStats s{};
     uint64_t total_us = 0;
     for (int i = 0; i < num_events_; i++) total_us += dur_us_[i];
     s.total_ms = total_us / 1000.0f;
 
-    if (num_events_ > 0)
-      s.conv_opening_ms = dur_us_[0] / 1000.0f;
+    int ev = 0;
 
+    // Absorb leading ops that are not the opening Conv (QUANTIZE, CONCATENATION)
+    while (ev < num_events_ && !_is(ev, "CONV_2D"))
+      s.other_ms += dur_us_[ev++] / 1000.0f;
+
+    // Opening Conv2D (3×3 stride-2)
+    if (ev < num_events_ && _is(ev, "CONV_2D"))
+      s.conv_opening_ms = dur_us_[ev++] / 1000.0f;
+
+    // DS blocks: (DEPTHWISE_CONV_2D, CONV_2D) pairs
     s.n_ds = 0;
-    int ev = 1;
-    for (int blk = 0; blk < 13 && ev + 1 < num_events_; blk++, ev += 2) {
-      s.dw_ms[blk] = dur_us_[ev]     / 1000.0f;
-      s.pw_ms[blk] = dur_us_[ev + 1] / 1000.0f;
-      s.ds_ms[blk] = s.dw_ms[blk] + s.pw_ms[blk];
+    while (ev + 1 < num_events_ && s.n_ds < 13 &&
+           _is(ev, "DEPTHWISE_CONV_2D") && _is(ev + 1, "CONV_2D")) {
+      int b = s.n_ds;
+      s.dw_ms[b] = dur_us_[ev]     / 1000.0f;
+      s.pw_ms[b] = dur_us_[ev + 1] / 1000.0f;
+      s.ds_ms[b] = s.dw_ms[b] + s.pw_ms[b];
       s.n_ds++;
+      ev += 2;
     }
+
+    // GAP: MEAN (QAT) or AVERAGE_POOL_2D (stock)
+    if (ev < num_events_ &&
+        (_is(ev, "MEAN") || _is(ev, "AVERAGE_POOL_2D")))
+      s.gap_ms = dur_us_[ev++] / 1000.0f;
+
+    // Remaining (FULLY_CONNECTED, SOFTMAX, RESHAPE, …)
+    while (ev < num_events_)
+      s.other_ms += dur_us_[ev++] / 1000.0f;
+
+    // Aggregates
     s.conv_total_ms = s.conv_opening_ms;
     s.dc_total_ms   = 0.0f;
     for (int i = 0; i < s.n_ds; i++) {
       s.conv_total_ms += s.pw_ms[i];
       s.dc_total_ms   += s.dw_ms[i];
     }
-
-    if (ev < num_events_)
-      s.gap_ms = dur_us_[ev++] / 1000.0f;   // AVERAGE_POOL_2D
-
-    float other_us = 0;
-    while (ev < num_events_) other_us += dur_us_[ev++];
-    s.other_ms = other_us / 1000.0f;
 
     return s;
   }
@@ -96,18 +111,31 @@ class ArchProfiler : public tflite::MicroProfilerInterface {
 
     printf("\n--- MobileNetV1 Arch Breakdown (%d ops) ---\n", num_events_);
 
-    // Event 0: opening Conv2D 3×3
-    _print_row("Conv2D 3x3 s2 (opening)", dur_us_[0], total_us);
+    int ev = 0;
 
-    // Events 1..26: 13 depthwise separable blocks
-    int ev = 1;
-    for (int blk = 1; blk <= 13 && ev + 1 < num_events_; blk++, ev += 2) {
-      char label[32];
-      snprintf(label, sizeof(label), "DS Block %2d  (DW + PW)", blk);
-      _print_row_2(label, dur_us_[ev], dur_us_[ev + 1], total_us);
+    // Pre-backbone ops (QUANTIZE, CONCATENATION, etc.)
+    while (ev < num_events_ && !_is(ev, "CONV_2D")) {
+      _print_row(tags_[ev], dur_us_[ev], total_us);
+      ev++;
     }
 
-    // Remaining events: GAP, Reshape, Softmax
+    // Opening Conv2D
+    if (ev < num_events_ && _is(ev, "CONV_2D")) {
+      _print_row("Conv2D 3x3 s2 (opening)", dur_us_[ev], total_us);
+      ev++;
+    }
+
+    // DS blocks
+    int blk = 1;
+    while (ev + 1 < num_events_ && blk <= 13 &&
+           _is(ev, "DEPTHWISE_CONV_2D") && _is(ev + 1, "CONV_2D")) {
+      char label[32];
+      snprintf(label, sizeof(label), "DS Block %2d  (DW + PW)", blk++);
+      _print_row_2(label, dur_us_[ev], dur_us_[ev + 1], total_us);
+      ev += 2;
+    }
+
+    // Remaining (GAP, FC, SOFTMAX, etc.)
     while (ev < num_events_) {
       _print_row(tags_[ev], dur_us_[ev], total_us);
       ev++;
@@ -122,6 +150,10 @@ class ArchProfiler : public tflite::MicroProfilerInterface {
   int64_t     start_us_[kMaxEvents] = {};
   uint32_t    dur_us_[kMaxEvents] = {};
   int         num_events_ = 0;
+
+  bool _is(int idx, const char* name) const {
+    return tags_[idx] && strcmp(tags_[idx], name) == 0;
+  }
 
   static void _print_row(const char* label, uint32_t us, uint64_t total_us) {
     float ms  = us / 1000.0f;

@@ -35,7 +35,7 @@ On-Device Person Detection with Notification}
 \maketitle
 
 \begin{abstract}
-Deploying ML inference directly on microcontrollers eliminates bandwidth overhead and privacy exposure inherent in cloud-based video surveillance. The main challenge is fitting a viable vision model within the severe memory and compute constraints of embedded hardware while maintaining alarm-grade precision. This paper presents a Smart Visual Alarm System on the ESP32-S3-EYE that addresses this challenge through fully on-device person detection: a custom MobileNetV1 retrained with quantization-aware training (QAT) running under TensorFlow Lite for Microcontrollers achieves 88.4\% precision at a false-alarm rate of 8.9\%, with end-to-end inference latency of 351 ms ($\approx$2.85 FPS) on the embedded hardware. A three-frame moving-average filter further suppresses spurious triggers in live video. Alarm events are published via MQTT to a Python backend that delivers real-time Telegram notifications. Evaluated on 48,287 held-out COCO 2017 images, the system achieves ROC-AUC = 0.856 and AP = 0.877.
+Deploying ML inference directly on microcontrollers eliminates bandwidth overhead and privacy exposure inherent in cloud-based video surveillance. The main challenge is fitting a viable vision model within the severe memory and compute constraints of embedded hardware while maintaining alarm-grade precision. This paper presents a Smart Visual Alarm System on the ESP32-S3-EYE that addresses this challenge through fully on-device person detection: a custom MobileNetV1 retrained with quantization-aware training (QAT) running under TensorFlow Lite for Microcontrollers achieves 88.4\% precision at a false-alarm rate of 8.9\%, with end-to-end inference latency of 403\,ms ($\approx$2.48\,FPS) on the embedded hardware. A three-frame moving-average filter further suppresses spurious triggers in live video. Alarm events are published via MQTT to a Python backend that delivers real-time Telegram notifications. Evaluated on 48,287 held-out COCO 2017 images, the system achieves ROC-AUC = 0.856 and AP = 0.877.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -50,7 +50,7 @@ edge AI, TinyML
 The proliferation of low-cost cameras in homes, offices, and public spaces has made video-based surveillance a cornerstone of modern security systems. Traditionally, these systems rely on continuous video streaming to remote servers or cloud platforms, where inference is performed centrally. This architecture, however, carries two fundamental costs. First, transmitting raw video over a network exposes sensitive visual data to interception, storage by third parties, and potential misuse, a serious privacy concern in residential and workplace deployments where occupants have a reasonable expectation not to be recorded and analysed off-premises, as exemplified by the well-documented Amazon Ring case~\cite{ftc2023ring}. Second, continuous video streaming is bandwidth-intensive: a single 720p camera at modest quality can consume several Mbps of uplink, making cloud-based inference economically and practically unviable in bandwidth-constrained or large-scale deployments. Edge computing addresses both issues by pushing inference directly to the data source, so that only high-level semantic events, rather than raw pixels, ever leave the device.
 
 Realising vision-based inference on embedded hardware is, however, far from straightforward. Microcontrollers (MCUs) typically operate with tens to hundreds of kilobytes of SRAM, no dedicated GPU, and clock speeds in the hundreds of MHz, orders of magnitude below the resources assumed by standard deep learning frameworks. Fitting a convolutional neural network capable of meaningful person detection within these constraints requires aggressive model compression (quantisation, architecture search) and careful memory management, all while meeting real-time latency requirements suitable for an alarm application.
-A complete Smart Visual Alarm System is presented that addresses the above challenges end-to-end on a single embedded device. The main contributions are: (i) a fully on-device person detection pipeline on the ESP32-S3-EYE, combining a custom QAT MobileNetV1 with a three-frame moving-average filter for robust alarm triggering without any cloud dependency, (ii) a lightweight MQTT-based event notification architecture in which raw video never leaves the device and only compact JSON descriptors are transmitted, (iii) a custom MobileNetV1 retrained with quantization-aware training that recovers the accuracy degraded by post-training quantisation, outperforming the stock PTQ int8 model (ROC-AUC\,=\,0.856 vs.\ 0.823 on the held-out test set) at zero additional inference cost, and (iv) a systematic evaluation on 48,287 held-out COCO 2017 images (training offset 70{,}000) demonstrating ROC-AUC $= 0.856$, AP $= 0.877$, and $88.4\%$ precision at a false-alarm rate of $8.9\%$ (firmware default $\theta\!=\!0.60$), with a hardware inference latency of $351$ ms on the target MCU.
+A complete Smart Visual Alarm System is presented that addresses the above challenges end-to-end on a single embedded device. The main contributions are: (i) a fully on-device person detection pipeline on the ESP32-S3-EYE, combining a custom QAT MobileNetV1 with a three-frame moving-average filter for robust alarm triggering without any cloud dependency, (ii) a lightweight MQTT-based event notification architecture in which raw video never leaves the device and only compact JSON descriptors are transmitted, (iii) a custom MobileNetV1 retrained with quantization-aware training that recovers the accuracy degraded by post-training quantisation, outperforming the stock PTQ int8 model (ROC-AUC\,=\,0.856 vs.\ 0.823 on the held-out test set) at zero additional inference cost, and (iv) a systematic evaluation on 48,287 held-out COCO 2017 images (training offset 70{,}000) demonstrating ROC-AUC $= 0.856$, AP $= 0.877$, and $88.4\%$ precision at a false-alarm rate of $8.9\%$ (firmware default $\theta\!=\!0.60$), with a hardware inference latency of $403$\,ms on the target MCU.
 % ─────────────────────────────────────────────────────────────────────────────
 \section{System Architecture}
 \label{sec:arch}
@@ -277,9 +277,10 @@ The resulting TFLite graph uses seven ops:
 \texttt{FULLY\_CONNECTED}, \texttt{MEAN}, \texttt{CONCATENATION},
 \texttt{SOFTMAX}, and \texttt{QUANTIZE}.
 Model size is 304.2\,KB int8 (vs.\ 293.5\,KB for the stock PTQ model), a negligible
-increase. Hardware inference latency is unchanged at ${\approx}351$\,ms,
-as the added \texttt{MEAN} and \texttt{FULLY\_CONNECTED} ops each
-contribute less than 1\,ms.
+increase. Hardware inference latency on the target device measures ${\approx}403$\,ms
+(${\approx}2.48$\,FPS); the QAT-specific \texttt{QUANTIZE},
+\texttt{CONCATENATION}, \texttt{MEAN}, and \texttt{FULLY\_CONNECTED}
+ops collectively contribute ${\approx}13$\,ms of the total.
 
 \subsection{Detection Logic and Alarm Trigger}
 
@@ -289,7 +290,7 @@ noise:
   \bar{s}_t = \frac{1}{W}\sum_{k=0}^{W-1} s_{t-k}
   \label{eq:mavg}
 \end{equation}
-At ${\approx}2.85$\,FPS, $W\!=\!3$ spans ${\approx}1$\,s, sufficient to
+At ${\approx}2.48$\,FPS, $W\!=\!3$ spans ${\approx}1.2$\,s, sufficient to
 suppress single-frame false positives while preserving sustained detections.
 An alarm fires when $\bar{s}_t \geq \theta$ and at least $C_{\min}$
 seconds have elapsed (defaults: $\theta\!=\!0.60$, $C_{\min}\!=\!10$\,s);
@@ -305,13 +306,12 @@ during a live deployment.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=\columnwidth]{Figure_1.png}
+  \includegraphics[width=\columnwidth]{live_score_20260603_231217.png}
   \caption{Raw per-frame person score (blue) and its 3-frame
            moving average (red) recorded on the ESP32-S3-EYE during
            a live session. The green dashed line marks the alarm
            threshold $\theta=0.60$. The filter attenuates transient
-           spikes visible in the raw signal while preserving the
-           sustained detection event around frames 50--80.}
+           spikes.}
   \label{fig:livescore}
 \end{figure}
 
@@ -329,56 +329,46 @@ confidence, and timestamp. Credentials are passed via environment variables.
 \subsection{Hardware Inference Latency}
 
 Inference timing was collected on the deployed device (Xtensa~LX7 @
-240\,MHz, \texttt{CONFIG\_NN\_OPTIMIZED} enabled) over $n\!=\!1{,}479$
+240\,MHz, \texttt{CONFIG\_NN\_OPTIMIZED} enabled) over $n\!=\!104$
 consecutive frames. Results are shown in Table~\ref{tab:hw_latency} and
-Fig.~\ref{fig:latency_box}.
+Fig.~\ref{fig:latency_live}.
 
 \begin{table}[h]
 \centering
-\caption{Inference latency on ESP32-S3-EYE ($n\!=\!1{,}479$ frames).}
+\caption{Inference latency on ESP32-S3-EYE ($n\!=\!104$ frames).}
 \label{tab:hw_latency}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-\textbf{Layer group} & \textbf{Mean} & \textbf{Std} & \textbf{Min} & \textbf{P99} \\
+\textbf{Layer group} & \textbf{Mean} & \textbf{Std} & \textbf{Min} & \textbf{Max} \\
 \midrule
-Conv2D (3x3 and all 1x1)     & 323.4\,ms & 0.91\,ms & 321\,ms & 325\,ms \\
-DepthwiseConv2D  &  26.6\,ms & 0.54\,ms &  26\,ms &  28\,ms \\
-Other layers     & \multicolumn{4}{c}{$<$1\,ms (negligible)} \\
+Conv2D (3$\times$3 + all 1$\times$1 PW) & 367.8\,ms & 1.04\,ms & 366\,ms & 370\,ms \\
+DepthwiseConv2D                          &  22.3\,ms & 0.38\,ms &  22\,ms &  24\,ms \\
+Other (GAP, QUANTIZE, FC, Softmax)       &  13.4\,ms & 0.21\,ms &  13\,ms &  14\,ms \\
 \midrule
-\textbf{Total Invoke()} & \textbf{351.3\,ms} & \textbf{0.98\,ms}
-  & \textbf{349\,ms} & \textbf{353\,ms} \\
+\textbf{Total Invoke()} & \textbf{403.5\,ms} & \textbf{1.12\,ms}
+  & \textbf{401\,ms} & \textbf{406\,ms} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 Conv2D (opening layer + 13 pointwise $1{\times}1$) accounts for
-${\approx}92\,\%$ of invoke time; DepthwiseConv2D contributes
-${\approx}8\,\%$ (Fig.~\ref{fig:latency_cols}).
+${\approx}91\,\%$ of invoke time; DepthwiseConv2D contributes
+${\approx}6\,\%$; QAT-specific and classifier ops account for the
+remaining ${\approx}3\,\%$ (Fig.~\ref{fig:latency_live}).
 Early DS blocks on larger feature maps are up to $3{\times}$ slower than
-later ones (DS\,1--3 vs DS\,6--13). Total: 351\,ms (${\approx}2.85$\,FPS).
+later ones (DS\,1--3 vs DS\,6--13). Total: 403\,ms (${\approx}2.48$\,FPS).
 
 \begin{figure}[h]
   \centering
-  \begin{minipage}[t]{0.44\columnwidth}
-    \centering
-    \includegraphics[width=\linewidth]{stats_breakdown.png}
-    \caption{Mean latency by layer type ($n\!=\!1{,}479$). Conv2D
-             (opening $3{\times}3$ + thirteen $1{\times}1$ PW)
-             dominates at $323$\,ms; DW Conv contributes $27$\,ms.
-             Error bars: $\pm1\sigma$.}
-    \label{fig:latency_breakdown}
-  \end{minipage}
-  \hfill
-  \begin{minipage}[t]{0.50\columnwidth}
-    \centering
-    \includegraphics[width=\linewidth]{stats_plot_layer.png}
-    \caption{Per-block mean latency ($n\!=\!1{,}560$). The opening
-             Conv $3{\times}3$ contributes only 5.1\,ms; early DS
-             blocks (DS\,1--3) on larger feature maps are up to
-             $3{\times}$ slower than later ones.}
-    \label{fig:latency_layer}
-  \end{minipage}
-  \label{fig:latency_cols}
+  \includegraphics[width=\columnwidth]{latency_20260603_235612.png}
+  \caption{Inference latency breakdown on the ESP32-S3-EYE QAT model
+           ($n\!=\!104$ frames). \textit{Left}: Conv2D
+           ($3{\times}3$ opening + all $1{\times}1$ PW, 367.8\,ms,
+           ${\approx}91\,\%$) vs.\ DW Conv (22.3\,ms, ${\approx}6\,\%$).
+           \textit{Right}: per-block mean latency; early DS blocks
+           (DS\,1--3) on larger feature maps are up to $3{\times}$
+           slower than later ones (DS\,6--13).}
+  \label{fig:latency_live}
 \end{figure}
 
 \subsection{Model Efficiency Metrics}
@@ -420,11 +410,11 @@ Float32 equivalent      & 1{,}217\,KB & 2{,}658\,KB \\
 Estimated MACs          & $\approx$7.2\,MMAC & $\approx$26.7\,MMAC \\
 Estimated FLOPs         & $\approx$14.3\,MFlop & $\approx$53.3\,MFlop \\
 Tensor arena (PSRAM)    & 100\,KB     & 900\,KB \\
-Inference latency (mean)& 351.3\,ms  & 1{,}919.4\,ms \\
-Inference latency (std) & 0.98\,ms   & 0.71\,ms \\
-Inference latency (min) & 349\,ms    & 1{,}919\,ms \\
-Inference latency (P99) & 353\,ms    & 1{,}921\,ms \\
-Throughput              & 2.85\,FPS  & 0.52\,FPS \\
+Inference latency (mean)& 403.5\,ms  & 1{,}919.4\,ms \\
+Inference latency (std) & 1.12\,ms   & 0.71\,ms \\
+Inference latency (min) & 401\,ms    & 1{,}919\,ms \\
+Inference latency (max) & 406\,ms    & 1{,}921\,ms \\
+Throughput              & 2.48\,FPS  & 0.52\,FPS \\
 \bottomrule
 \end{tabular}%
 }
@@ -434,7 +424,7 @@ MobileNetV2~\cite{mobilenetv2} uses inverted residual bottlenecks
 with an expansion factor of~6, raising MACs by $3.7{\times}$ and the
 tensor arena from 100\,KB to 900\,KB. Combined with the
 $8.3{\times}$ larger input, invoke time reaches $1{,}919$\,ms
-($0.52$\,FPS) --- a $5.5{\times}$ slowdown. MobileNetV2 was therefore
+($0.52$\,FPS) --- a $4.8{\times}$ slowdown. MobileNetV2 was therefore
 not evaluated for detection quality on this hardware.
 
 \subsection{Detection Quality}
@@ -560,14 +550,14 @@ device. A custom MobileNetV1 was retrained with quantization-aware
 training, recovering the accuracy degraded by post-training quantisation:
 on the held-out test set (48{,}287 COCO\,2017 images, offset 70{,}000),
 QAT int8 achieves AUC\,=\,0.856 and AP\,=\,0.877 vs.\ AUC\,=\,0.823
-and AP\,=\,0.858 for the stock PTQ int8, at identical inference cost
-(351\,ms, ${\approx}2.85$\,FPS) and a 312\,KB model footprint
+and AP\,=\,0.858 for the stock PTQ int8, with a measured inference latency of
+403\,ms (${\approx}2.48$\,FPS) and a 304\,KB model footprint
 (Table~\ref{tab:ptq_vs_qat}). The firmware threshold
 $\theta\!=\!0.60$ provides 88.4\,\% precision at 8.9\,\% FAR,
 and the three-frame moving-average filter further reduces the
 effective false-alarm rate on live video.
 A MobileNetV2 candidate was measured at $1{,}919$\,ms
-(0.52\,FPS, Table~\ref{tab:v2_efficiency}), $5.5{\times}$ slower than
+(0.52\,FPS, Table~\ref{tab:v2_efficiency}), $4.8{\times}$ slower than
 MobileNetV1 and incompatible with the 1\,s alarm-window requirement,
 confirming that any accuracy improvement must come at lower---not
 higher---computational cost on this hardware.
