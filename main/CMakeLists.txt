@@ -13,7 +13,7 @@ idf_component_register(
         "lcd_display.c"
 
     PRIV_REQUIRES
-        console static_images spi_flash
+        console spi_flash
         nvs_flash esp_wifi esp_event esp_netif mqtt
         esp_lcd driver
 
