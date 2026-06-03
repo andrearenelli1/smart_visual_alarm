@@ -68,6 +68,64 @@ import queue, threading
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# COCO loader with offset support
+# ──────────────────────────────────────────────────────────────────────────────
+def _load_coco(coco_dir: Path, split: str = "train",
+               offset: int = 0, max_samples: int | None = None):
+    """
+    Load COCO 2017 images as (list[Path], np.ndarray[int]) using pycocotools.
+    Images are returned as Path objects so the inference runner opens them lazily.
+
+    Layout expected:
+      <coco_dir>/train2017/         or val2017/
+      <coco_dir>/annotations/instances_train2017.json
+    """
+    try:
+        from pycocotools.coco import COCO
+    except ImportError:
+        sys.exit("[coco] pycocotools not installed: pip install pycocotools")
+
+    ann_file = coco_dir / "annotations" / f"instances_{split}2017.json"
+    img_dir  = coco_dir / f"{split}2017"
+    if not ann_file.exists():
+        sys.exit(f"[coco] Annotation file not found: {ann_file}")
+    if not img_dir.exists():
+        sys.exit(f"[coco] Image directory not found: {img_dir}")
+
+    print(f"[coco]   Loading {ann_file.name} …")
+    coco = COCO(str(ann_file))
+
+    PERSON_CAT_ID = 1
+    person_img_ids = {
+        ann["image_id"]
+        for ann in coco.dataset["annotations"]
+        if ann["category_id"] == PERSON_CAT_ID and not ann.get("iscrowd", 0)
+    }
+
+    paths, labels = [], []
+    for img_info in coco.dataset["images"]:
+        p = img_dir / img_info["file_name"]
+        if not p.exists():
+            continue
+        paths.append(p)
+        labels.append(1 if img_info["id"] in person_img_ids else 0)
+
+    labels = np.array(labels, dtype=int)
+
+    if offset:
+        paths  = paths[offset:]
+        labels = labels[offset:]
+    if max_samples is not None:
+        paths  = paths[:max_samples]
+        labels = labels[:max_samples]
+
+    n, pos = len(paths), int(labels.sum())
+    print(f"[coco]   {split}[{offset}:{offset + n}]  "
+          f"{n} images  (person={pos}, no_person={n-pos})")
+    return paths, labels
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Inference runner
 # ──────────────────────────────────────────────────────────────────────────────
 def _prefetch(items):
@@ -219,10 +277,16 @@ def parse_args():
     # Dataset
     p.add_argument("--dataset-dir", type=Path,
                    help="Local VWW root (person/ non_person/ layout)")
+    p.add_argument("--coco-dir", type=Path,
+                   help="COCO 2017 root (contains train2017/ and annotations/)")
+    p.add_argument("--coco-split", default="train",
+                   help="COCO split to use: train or val (default: train)")
+    p.add_argument("--coco-offset", type=int, default=0,
+                   help="Skip first N images from the COCO split (default: 0)")
     p.add_argument("--split", default="test",
                    help="TFDS split (default: test)")
     p.add_argument("--max-samples", type=int, default=None,
-                   help="Limit number of images for quick runs")
+                   help="Limit number of images (applied after --coco-offset)")
     p.add_argument("--demo", action="store_true",
                    help="Use the 10 static project images (pipeline smoke-test)")
     # Eval options
@@ -262,6 +326,10 @@ def main():
             dataset = _load_static_samples()
             if dataset is None:
                 sys.exit("[dataset] --demo: static_images/sample_images/ not found")
+        elif args.coco_dir:
+            dataset = _load_coco(args.coco_dir, args.coco_split,
+                                 offset=args.coco_offset,
+                                 max_samples=args.max_samples)
         elif args.dataset_dir:
             dataset = _load_dir(args.dataset_dir)
         if dataset is None:
@@ -269,13 +337,13 @@ def main():
         if dataset is None:
             sys.exit(
                 "\n[dataset] No dataset available. Options:\n"
-                "  --demo                      10 project images (pipeline smoke-test)\n"
-                "  --dataset-dir ./vww_data    local person/ non_person/ folder\n"
-                "                              (run download_coco_vww.py to build it)\n"
-                "  TFDS visual_wake_words      needs COCO pre-downloaded (~780 MB)"
+                "  --demo                           10 project images (smoke-test)\n"
+                "  --coco-dir /path/to/coco         COCO 2017 with pycocotools\n"
+                "  --dataset-dir ./vww_data         person/ non_person/ layout\n"
+                "  TFDS visual_wake_words           needs COCO pre-downloaded"
             )
         images, labels = dataset
-        if args.max_samples:
+        if not args.coco_dir and args.max_samples:
             images = images[: args.max_samples]
             labels = labels[: args.max_samples]
 
