@@ -1,0 +1,188 @@
+[
+  {
+    "label": "float32",
+    "n_samples": 5000,
+    "accuracy_t50": 0.7728,
+    "precision_person_t50": 0.8184049079754602,
+    "recall_person_t50": 0.7430375046416636,
+    "f1_person_t50": 0.7789022966134683,
+    "precision_no_person_t50": 0.7291585127201565,
+    "recall_no_person_t50": 0.8075422626788037,
+    "f1_no_person_t50": 0.7663512957630605,
+    "f1_macro_t50": 0.7726267961882645,
+    "confusion_matrix_t50": [
+      [
+        1863,
+        444
+      ],
+      [
+        692,
+        2001
+      ]
+    ],
+    "accuracy": 0.7746,
+    "precision_person": 0.8170040485829959,
+    "recall_person": 0.7493501670998886,
+    "f1_person": 0.7817160565562657,
+    "precision_no_person": 0.733201581027668,
+    "recall_no_person": 0.8040745557000434,
+    "f1_no_person": 0.7670043415340086,
+    "f1_macro": 0.7743601990451372,
+    "confusion_matrix": [
+      [
+        1855,
+        452
+      ],
+      [
+        675,
+        2018
+      ]
+    ],
+    "threshold_optimal": 0.4932897388935089,
+    "auc_roc": 0.8592283032106066,
+    "inference_ms_per_img": 1.186,
+    "total_inference_s": 5.929,
+    "keras_loss": 0.46654096245765686,
+    "keras_accuracy": 0.7728000283241272,
+    "model_size_mb": 0.854344
+  },
+  {
+    "label": "PTQ_int8",
+    "n_samples": 5000,
+    "accuracy_t50": 0.7606,
+    "precision_person_t50": 0.8431192660550458,
+    "recall_person_t50": 0.6825102116598589,
+    "f1_person_t50": 0.7543607633901087,
+    "precision_no_person_t50": 0.6968085106382979,
+    "recall_no_person_t50": 0.8517555266579974,
+    "f1_no_person_t50": 0.7665301345816267,
+    "f1_macro_t50": 0.7604454489858676,
+    "confusion_matrix_t50": [
+      [
+        1965,
+        342
+      ],
+      [
+        855,
+        1838
+      ]
+    ],
+    "accuracy": 0.7726,
+    "precision_person": 0.8099601593625498,
+    "recall_person": 0.7549201633865578,
+    "f1_person": 0.7814722275610225,
+    "precision_no_person": 0.7349397590361446,
+    "recall_no_person": 0.7932379713914174,
+    "f1_no_person": 0.7629768605378362,
+    "f1_macro": 0.7722245440494293,
+    "confusion_matrix": [
+      [
+        1830,
+        477
+      ],
+      [
+        660,
+        2033
+      ]
+    ],
+    "threshold_optimal": 0.41796875,
+    "auc_roc": 0.8554888164679382,
+    "inference_ms_per_img": 0.614,
+    "total_inference_s": 3.07,
+    "model_size_mb": 0.308224,
+    "tflite_path": "output/person_detect_ptq_int8.tflite"
+  },
+  {
+    "label": "QAT_keras",
+    "n_samples": 5000,
+    "accuracy_t50": 0.7726,
+    "precision_person_t50": 0.8191140278917145,
+    "recall_person_t50": 0.7415521722985517,
+    "f1_person_t50": 0.7784057688559735,
+    "precision_no_person_t50": 0.7283372365339579,
+    "recall_no_person_t50": 0.8088426527958388,
+    "f1_no_person_t50": 0.7664818237831177,
+    "f1_macro_t50": 0.7724437963195456,
+    "confusion_matrix_t50": [
+      [
+        1866,
+        441
+      ],
+      [
+        696,
+        1997
+      ]
+    ],
+    "accuracy": 0.779,
+    "precision_person": 0.8028222730739893,
+    "recall_person": 0.7816561455625696,
+    "f1_person": 0.7920978363123237,
+    "precision_no_person": 0.7527333894028595,
+    "recall_no_person": 0.775899436497616,
+    "f1_no_person": 0.7641408751334045,
+    "f1_macro": 0.7781193557228641,
+    "confusion_matrix": [
+      [
+        1790,
+        517
+      ],
+      [
+        588,
+        2105
+      ]
+    ],
+    "threshold_optimal": 0.44151321053504944,
+    "auc_roc": 0.8610099616095994,
+    "inference_ms_per_img": 1.428,
+    "total_inference_s": 7.14,
+    "keras_loss": 0.46831226348876953,
+    "keras_accuracy": 0.7724000215530396,
+    "model_size_mb": 0.854344
+  },
+  {
+    "label": "QAT_int8",
+    "n_samples": 5000,
+    "accuracy_t50": 0.7738,
+    "precision_person_t50": 0.8219291014014839,
+    "recall_person_t50": 0.740438173041218,
+    "f1_person_t50": 0.779058409845673,
+    "precision_no_person_t50": 0.7284382284382285,
+    "recall_no_person_t50": 0.812743823146944,
+    "f1_no_person_t50": 0.7682851874615857,
+    "f1_macro_t50": 0.7736717986536293,
+    "confusion_matrix_t50": [
+      [
+        1875,
+        432
+      ],
+      [
+        699,
+        1994
+      ]
+    ],
+    "accuracy": 0.7786,
+    "precision_person": 0.8109803921568628,
+    "recall_person": 0.7679168213887857,
+    "f1_person": 0.7888613389280946,
+    "precision_no_person": 0.7448979591836735,
+    "recall_no_person": 0.7910706545296923,
+    "f1_no_person": 0.7672903090182889,
+    "f1_macro": 0.7780758239731917,
+    "confusion_matrix": [
+      [
+        1825,
+        482
+      ],
+      [
+        625,
+        2068
+      ]
+    ],
+    "threshold_optimal": 0.46484375,
+    "auc_roc": 0.8617183434520392,
+    "inference_ms_per_img": 0.623,
+    "total_inference_s": 3.117,
+    "model_size_mb": 0.311512,
+    "tflite_path": "output/person_detect_qat_int8.tflite"
+  }
+]
