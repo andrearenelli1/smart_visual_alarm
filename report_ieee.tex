@@ -276,7 +276,7 @@ The resulting TFLite graph uses seven ops:
 \texttt{CONV\_2D}, \texttt{DEPTHWISE\_CONV\_2D},
 \texttt{FULLY\_CONNECTED}, \texttt{MEAN}, \texttt{CONCATENATION},
 \texttt{SOFTMAX}, and \texttt{QUANTIZE}.
-Model size is 311.5\,KB int8 (vs.\ 308.2\,KB for PTQ), a negligible
+Model size is 304.2\,KB int8 (vs.\ 293.5\,KB for the stock PTQ model), a negligible
 increase. Hardware inference latency is unchanged at ${\approx}351$\,ms,
 as the added \texttt{MEAN} and \texttt{FULLY\_CONNECTED} ops each
 contribute less than 1\,ms.
@@ -423,9 +423,9 @@ architectures across all TinyML efficiency metrics.
 \textbf{Metric} & \textbf{MobileNetV1} & \textbf{MobileNetV2} \\
 \midrule
 Input resolution        & $96{\times}96$, gray, int8  & $160{\times}160$, RGB, int8 \\
-\#Parameters            & 213{,}272  & 453{,}104 \\
-Model size (int8)       & 293.5\,KB  & 664.5\,KB \\
-Float32 equivalent      & 1{,}174\,KB & 2{,}658\,KB \\
+\#Parameters            & 210{,}856  & 453{,}104 \\
+Model size (int8)       & 304.2\,KB  & 664.5\,KB \\
+Float32 equivalent      & 1{,}217\,KB & 2{,}658\,KB \\
 Estimated MACs          & $\approx$7.2\,MMAC & $\approx$26.7\,MMAC \\
 Estimated FLOPs         & $\approx$14.3\,MFlop & $\approx$53.3\,MFlop \\
 Tensor arena (PSRAM)    & 100\,KB     & 900\,KB \\
