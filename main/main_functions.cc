@@ -91,12 +91,14 @@ void setup() {
   //
   // tflite::AllOpsResolver resolver;
   // NOLINTNEXTLINE(runtime-global-variables)
-  static tflite::MicroMutableOpResolver<5> micro_op_resolver;
-  micro_op_resolver.AddAveragePool2D();
+  static tflite::MicroMutableOpResolver<7> micro_op_resolver;
   micro_op_resolver.AddConv2D();
   micro_op_resolver.AddDepthwiseConv2D();
-  micro_op_resolver.AddReshape();
+  micro_op_resolver.AddFullyConnected();
+  micro_op_resolver.AddMean();
+  micro_op_resolver.AddConcatenation();
   micro_op_resolver.AddSoftmax();
+  micro_op_resolver.AddQuantize();
 
   // Build an interpreter to run the model with.
   // NOLINTNEXTLINE(runtime-global-variables)
@@ -136,6 +138,7 @@ void setup() {
 
 #ifndef CLI_ONLY_INFERENCE
 void loop() {
+  if (input == nullptr) return;
   // Get image from provider.
   if (kTfLiteOk != GetImage(kNumCols, kNumRows, kNumChannels, input->data.int8)) {
     MicroPrintf("Image capture failed.");
