@@ -115,7 +115,7 @@ Under **Application Configuration**:
 | WiFi SSID / Password | — | Your Wi-Fi network |
 | MQTT Broker IP | — | IP of the Mosquitto host |
 | MQTT Broker Port | 1883 | |
-| Person detection threshold (%) | 55 | Alarm trigger threshold θ |
+| Person detection threshold (%) | 60 | Alarm trigger threshold θ |
 | Alarm cooldown (seconds) | 10 | Minimum interval between alarms |
 | Moving-average window (frames) | 5 | Smoothing window size |
 
@@ -174,8 +174,7 @@ images** (train split offset 70,000 — never seen during training).
 | PTQ int8 (stock) | 0.823 | 0.858 | 85.6% | 58.4% | 0.695 | 11.6% |
 | **QAT int8 (ours)** | **0.856** | **0.877** | **88.4%** | 57.5% | **0.697** | **8.9%** |
 
-All values at **θ = 0.60** (evaluation threshold used in the paper;
-firmware default is θ = 0.55).
+All values at firmware default **θ = 0.60**.
 
 The 3-frame moving-average filter applied in firmware further reduces the live
 false-alarm rate by smoothing isolated single-frame spikes.
