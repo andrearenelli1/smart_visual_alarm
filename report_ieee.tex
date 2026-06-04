@@ -119,7 +119,7 @@ Camera         & OV2640, up to 2\,MP \\
 Connectivity   & Wi-Fi 802.11 b/g/n, Bluetooth 5.0 \\
 Display        & 1.3-inch LCD (240$\times$240) \\
 Microphone     & Digital PDM microphone \\
-Power supply   & USB Type-C, 5\,V \\
+Power supply   & USB, 5\,V \\
 \hline
 \end{tabular}
 \end{table}
@@ -165,7 +165,7 @@ The architecture (Fig.~\ref{fig:mobilenet}) opens with one $3{\times}3$
 convolution followed by 13 depthwise separable blocks, global average
 pooling, and a softmax classifier. The depth multiplier $\alpha\!=\!0.25$
 scales all channel counts uniformly, yielding 213{,}272 parameters and
-${\approx}7.2$\,MMAC.
+${\approx}7.5$\,MMAC.
 
 \begin{figure}[h]
 \centering
@@ -246,41 +246,66 @@ degrading accuracy (see Section~\ref{sec:detquality}).
 
 \subsubsection{Quantization-Aware Training}
 
-Quantization-aware training~\cite{qat} addresses the PTQ accuracy gap
-by simulating quantisation noise during the forward pass via
-\emph{fake-quant} operators inserted after each weight and activation
-tensor. The model therefore learns weight distributions that are robust
-to 8-bit rounding, yielding a quantised network whose accuracy closely
-tracks the float32 baseline.
+QAT~\cite{qat} inserts \emph{fake-quant} operators during training so
+the model learns weight distributions robust to 8-bit rounding, closing
+the accuracy gap introduced by PTQ.
 
-The custom model retrains the MobileNetV1 backbone
-($\alpha\!=\!0.25$) using the Keras QAT API. Three architectural
-adaptations were required to train from the available ImageNet-pretrained
-weights and export cleanly to TFLite:
-\begin{itemize}
-  \item \textbf{Gray-to-RGB adapter.} The OV2640 camera delivers
-    grayscale frames, but the ImageNet-pretrained backbone expects a
-    3-channel input. A \texttt{Concatenate} layer replicates the single
-    luma channel three times before entering the backbone. This maps to
-    a \texttt{CONCATENATION} op in the TFLite graph.
-  \item \textbf{Global average pooling.} \texttt{GlobalAveragePooling2D}
-    computes the spatial mean over $H{\times}W$ and exports to TFLite
-    as a \texttt{MEAN} op (rather than \texttt{AVERAGE\_POOL\_2D} used
-    by a fixed-kernel pooling layer).
-  \item \textbf{Dense classifier head.} A \texttt{Dense(2,
-    activation=``softmax'')} layer replaces the $1{\times}1$
-    Conv2D classifier of the stock model, mapping to a
-    \texttt{FULLY\_CONNECTED} op followed by \texttt{SOFTMAX}.
-\end{itemize}
-The resulting TFLite graph uses seven ops:
-\texttt{CONV\_2D}, \texttt{DEPTHWISE\_CONV\_2D},
-\texttt{FULLY\_CONNECTED}, \texttt{MEAN}, \texttt{CONCATENATION},
-\texttt{SOFTMAX}, and \texttt{QUANTIZE}.
-Model size is 304.2\,KB int8 (vs.\ 293.5\,KB for the stock PTQ model), a negligible
-increase. Hardware inference latency on the target device measures ${\approx}403$\,ms
-(${\approx}2.48$\,FPS); the QAT-specific \texttt{QUANTIZE},
-\texttt{CONCATENATION}, \texttt{MEAN}, and \texttt{FULLY\_CONNECTED}
-ops collectively contribute ${\approx}13$\,ms of the total.
+\paragraph{Training pipeline.}
+Training follows a two-phase transfer-learning strategy on 70{,}000
+COCO\,2017 images. \emph{Phase~1} (5 epochs, Adam, $\text{lr}=10^{-3}$):
+the ImageNet-pretrained backbone is frozen and only the new classifier
+head is trained. \emph{Phase~2} (5 epochs, $\text{lr}=10^{-4}$): the
+full network is unfrozen and fine-tuned end-to-end.
+EarlyStopping (patience\,=\,4) and ReduceLROnPlateau
+(factor\,=\,0.5, patience\,=\,2) are applied throughout, with
+ModelCheckpoint saving the best validation-accuracy weights.
+QAT then fine-tunes the float32 checkpoint for 3 additional epochs at
+$\text{lr}=10^{-5}$, a low rate that preserves the learned weights
+while adapting them to quantisation noise.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\columnwidth]{01_float_training.png}
+  \caption{Float32 MobileNetV1 ($\alpha\!=\!0.25$) training curves
+           (10 epochs, 70{,}000 COCO\,2017 images).
+           The visible kink at epoch~5 marks the transition from
+           Phase~1 (backbone frozen, head only) to Phase~2 (full
+           fine-tuning at $\text{lr}=10^{-4}$).}
+  \label{fig:training_curves}
+\end{figure}
+
+Three adaptations bridge the grayscale sensor and the pretrained
+backbone: (i) a \texttt{Concatenate} layer replicates the single grey-scale
+channel three times (\texttt{CONCATENATION} op in TFLite), this is needed to adapt the model trained with ImageNet (RGB input),
+(ii) \texttt{GlobalAveragePooling2D} exports as \texttt{MEAN} and
+(iii) a \texttt{Dense(2)} softmax head replaces the stock $1{\times}1$
+Conv2D classifier (\texttt{FULLY\_CONNECTED} + \texttt{SOFTMAX}).
+
+\paragraph{Float32 / PTQ / QAT accuracy.}
+Table~\ref{tab:model_variants} reports metrics on the COCO 2017 validation set, confirming that the fake-quant regularisation is
+beneficial rather than merely neutral.
+
+\begin{table}[h]
+\centering
+\caption{Model variants evaluated on 5{,}000 held-out images.
+         Accuracy at $\theta\!=\!0.5$; loss from \texttt{model.evaluate()}}
+\label{tab:model_variants}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Model} & \textbf{AUC-ROC} & \textbf{$\Delta$ AUC} & \textbf{Acc.} & \textbf{Loss} \\
+\midrule
+Float32          & 0.859 & ---      & 77.3\,\% & 0.467 \\
+PTQ int8 (stock) & 0.855 & $-0.004$ & 76.1\,\% & ---   \\
+QAT int8 (ours)  & \textbf{0.862} & $+0.003$ & \textbf{77.4\,\%} & 0.468 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+The resulting graph adds ${\approx}13$\,ms of overhead over the PTQ
+backbone, yielding a total invoke time of $403$\,ms at a model size of
+304.2\,KB int8 ($+$10.7\,KB vs.\ PTQ).
 
 \subsection{Detection Logic and Alarm Trigger}
 
@@ -337,6 +362,7 @@ Fig.~\ref{fig:latency_live}.
 \centering
 \caption{Inference latency on ESP32-S3-EYE ($n\!=\!104$ frames).}
 \label{tab:hw_latency}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
 \textbf{Layer group} & \textbf{Mean} & \textbf{Std} & \textbf{Min} & \textbf{Max} \\
@@ -348,12 +374,13 @@ Other (GAP, QUANTIZE, FC, Softmax)       &  13.4\,ms & 0.21\,ms &  13\,ms &  14\
 \textbf{Total Invoke()} & \textbf{403.5\,ms} & \textbf{1.12\,ms}
   & \textbf{401\,ms} & \textbf{406\,ms} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 Conv2D (opening layer + 13 pointwise $1{\times}1$) accounts for
-${\approx}91\,\%$ of invoke time; DepthwiseConv2D contributes
-${\approx}6\,\%$; QAT-specific and classifier ops account for the
+${\approx}91\,\%$ of invoke time. DepthwiseConv2D contributes
+${\approx}6\,\%$, while QAT-specific and classifier ops account for the
 remaining ${\approx}3\,\%$ (Fig.~\ref{fig:latency_live}).
 Early DS blocks on larger feature maps are up to $3{\times}$ slower than
 later ones (DS\,1--3 vs DS\,6--13). Total: 403\,ms (${\approx}2.48$\,FPS).
@@ -365,7 +392,7 @@ later ones (DS\,1--3 vs DS\,6--13). Total: 403\,ms (${\approx}2.48$\,FPS).
            ($n\!=\!104$ frames). \textit{Left}: Conv2D
            ($3{\times}3$ opening + all $1{\times}1$ PW, 367.8\,ms,
            ${\approx}91\,\%$) vs.\ DW Conv (22.3\,ms, ${\approx}6\,\%$).
-           \textit{Right}: per-block mean latency; early DS blocks
+           \textit{Right}: per-block mean latency. Early DS blocks
            (DS\,1--3) on larger feature maps are up to $3{\times}$
            slower than later ones (DS\,6--13).}
   \label{fig:latency_live}
@@ -407,8 +434,8 @@ Input resolution        & $96{\times}96$, gray, int8  & $160{\times}160$, RGB, i
 \#Parameters            & 210{,}856  & 453{,}104 \\
 Model size (int8)       & 304.2\,KB  & 664.5\,KB \\
 Float32 equivalent      & 1{,}217\,KB & 2{,}658\,KB \\
-Estimated MACs          & $\approx$7.2\,MMAC & $\approx$26.7\,MMAC \\
-Estimated FLOPs         & $\approx$14.3\,MFlop & $\approx$53.3\,MFlop \\
+Estimated MACs          & $\approx$7.5\,MMAC & $\approx$26.7\,MMAC \\
+Estimated FLOPs         & $\approx$15.0\,MFlop & $\approx$53.3\,MFlop \\
 Tensor arena (PSRAM)    & 100\,KB     & 900\,KB \\
 Inference latency (mean)& 403.5\,ms  & 1{,}919.4\,ms \\
 Inference latency (std) & 1.12\,ms   & 0.71\,ms \\
@@ -424,13 +451,13 @@ MobileNetV2~\cite{mobilenetv2} uses inverted residual bottlenecks
 with an expansion factor of~6, raising MACs by $3.7{\times}$ and the
 tensor arena from 100\,KB to 900\,KB. Combined with the
 $8.3{\times}$ larger input, invoke time reaches $1{,}919$\,ms
-($0.52$\,FPS) --- a $4.8{\times}$ slowdown. MobileNetV2 was therefore
+($0.52$\,FPS), a $4.8{\times}$ slowdown. MobileNetV2 was therefore
 not evaluated for detection quality on this hardware.
 
 \subsection{Detection Quality}
 \label{sec:detquality}
 
-Both models were evaluated on the held-out test set: the 48{,}287
+Both models (v1 in both PTQ and QAT versions) were evaluated on the held-out test set: the 48{,}287
 COCO\,2017 train images from index 70{,}000 onward, i.e.\ the portion
 never seen during QAT training. Labels follow the Visual Wake Words
 (person / no-person) layout~\cite{vww}. Preprocessing replicates the
@@ -467,29 +494,8 @@ $\Delta$ (QAT$-$PTQ) & +0.033 & +0.019 & +2.8\,pp & $-$0.9\,pp & +0.002 & $-$2.7
 
 \subsubsection{Test-set evaluation}
 
-\begin{table}[h]
-\centering
-\caption{QAT model performance on 48{,}287 held-out COCO\,2017 images
-         at representative thresholds.}
-\label{tab:thresholds}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}ccccccc@{}}
-\toprule
-$\boldsymbol{\theta}$ & \textbf{Prec.} & \textbf{Rec.} & \textbf{F1} &
-  \textbf{Acc.} & \textbf{FAR} & \textbf{Profile} \\
-\midrule
-0.24 & 73.2\,\% & 87.9\,\% & \textbf{0.799} & 76.1\,\% & 37.8\,\% & Max F1 \\
-0.33 & 77.7\,\% & 80.8\,\% & 0.793 & 77.1\,\% & 27.3\,\% & Recall $\geq$80\,\% \\
-\textbf{0.60} & \textbf{88.4\,\%} & \textbf{57.5\,\%} & \textbf{0.697}
-  & \textbf{73.0\,\%} & \textbf{8.9\,\%} & \textbf{Firmware default} \\
-0.95 & 98.1\,\% & 17.3\,\% & 0.294 & 55.1\,\% & 0.4\,\% & High precision \\
-\bottomrule
-\end{tabular}%
-}
-\end{table}
-
 Overall, ROC-AUC\,=\,0.856 and AP\,=\,0.877 on the held-out test set
-(Figs.~\ref{fig:roc}--\ref{fig:sweep})
+(Figs.~\ref{fig:sweep_ptq}, \ref{fig:sweep}, \ref{fig:pr}, \ref{fig:roc})
 confirm good discriminative capacity despite int8 quantisation. The firmware-default $\theta\!=\!0.60$ was selected by combining
 benchmark results with on-site validation in a typical indoor environment.
 At $\theta\!=\!0.60$, precision is 88.4\,\% with FAR\,=\,8.9\,\%.
@@ -503,38 +509,49 @@ Fig.~\ref{fig:cm} shows the confusion matrices: at $\theta{=}0.60$ false
 negatives far outnumber false positives, confirming the system errs toward
 silence. COCO\,2017 covers a wide range of non-surveillance scenes and
 predominantly 4:3 images whose square-crop resizing distorts person
-silhouettes~\cite{esptflitemicro}; per-frame metrics therefore
+silhouettes~\cite{esptflitemicro}, so per-frame metrics
 underestimate operational performance.
 
 \begin{figure}[h]
   \centering
-  \includegraphics[width=0.8\columnwidth]{confusion_matrix.png}
-  \caption{Confusion matrices at $\theta \in \{0.26, 0.50, 0.60, 0.92\}$.
-           Bottom-left: firmware default $\theta{=}0.60$.}
+  \includegraphics[width=\columnwidth]{comparison/cmp_confusion.png}
+  \caption{Confusion matrices at the firmware default $\theta{=}0.60$:
+           PTQ int8 (\textit{left}, FAR\,=\,11.6\,\%) vs.\
+           QAT int8 (\textit{right}, FAR\,=\,8.9\,\%).
+           QAT reduces false positives by 593 on the 48{,}287-image test set.}
   \label{fig:cm}
 \end{figure}
 
 \begin{figure}[t]
   \centering
-  \begin{minipage}[t]{0.49\columnwidth}
-    \centering
-    \includegraphics[width=\linewidth]{threshold_sweep.png}
-    \caption{Metrics vs.\ $\theta$. Dashed: default ($\theta{=}0.60$).}
-    \label{fig:sweep}
-  \end{minipage}
-  \hfill
-  \begin{minipage}[t]{0.49\columnwidth}
-    \centering
-    \includegraphics[width=\linewidth]{pr_curve.png}
-    \caption{PR curve (AP\,=\,0.877).}
-    \label{fig:pr}
-  \end{minipage}
+  \includegraphics[width=\columnwidth]{cmp_threshold_ptq.png}
+  \caption{F1, precision, recall, and FAR vs.\ $\theta$ for the PTQ int8
+           model. Dashed: firmware default ($\theta{=}0.60$).}
+  \label{fig:sweep_ptq}
 \end{figure}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.7\columnwidth]{roc_curve.png}
-  \caption{ROC curve (AUC\,=\,0.856). Dashed diagonal: random classifier.}
+  \includegraphics[width=\columnwidth]{cmp_threshold_qat.png}
+  \caption{F1, precision, recall, and FAR vs.\ $\theta$ for the QAT int8
+           model. Compared to PTQ, precision is higher and FAR lower at
+           every threshold. Dashed: firmware default ($\theta{=}0.60$).}
+  \label{fig:sweep}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{comparison/cmp_pr.png}
+  \caption{Precision-Recall curves for PTQ (AP\,=\,0.858) and
+           QAT (AP\,=\,0.877).}
+  \label{fig:pr}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{comparison/cmp_roc.png}
+  \caption{ROC curves for PTQ (AUC\,=\,0.823) and QAT (AUC\,=\,0.856).
+           Dashed diagonal: random classifier.}
   \label{fig:roc}
 \end{figure}
 
@@ -556,16 +573,11 @@ and AP\,=\,0.858 for the stock PTQ int8, with a measured inference latency of
 $\theta\!=\!0.60$ provides 88.4\,\% precision at 8.9\,\% FAR,
 and the three-frame moving-average filter further reduces the
 effective false-alarm rate on live video.
-A MobileNetV2 candidate was measured at $1{,}919$\,ms
-(0.52\,FPS, Table~\ref{tab:v2_efficiency}), $4.8{\times}$ slower than
-MobileNetV1 and incompatible with the 1\,s alarm-window requirement,
-confirming that any accuracy improvement must come at lower---not
-higher---computational cost on this hardware.
 
-Future work includes: replacing the backbone with MCUNet~\cite{mcunet},
+Future work includes replacing the backbone with MCUNet~\cite{mcunet},
 which targets higher accuracy at comparable or lower memory and MAC
-budgets; and re-benchmarking on a surveillance-specific dataset (covering
-typical indoor and outdoor camera viewpoints) to obtain accuracy
+budgets, and re-benchmarking on a surveillance-specific dataset covering
+typical indoor and outdoor camera viewpoints to obtain accuracy
 estimates more representative of operational deployments.
 
 % ─────────────────────────────────────────────────────────────────────────────
